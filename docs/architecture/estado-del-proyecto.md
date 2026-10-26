@@ -19,7 +19,9 @@
 
 - Hecho: pool de PostgreSQL con timeouts, `GET /ready` (200/503), cierre ordenado del pool, pruebas unitarias e integración.
   Detalle en [base-de-datos-local.md](base-de-datos-local.md).
-- Pendiente: primer modelo escolar y su migración (revisada antes de aplicar).
+- Hecho en la rama `feat/school-catalog` (sin commit): esquema y migración de `school_years` y `groups`, probados en memoria.
+  Detalle en [modelo-catalogo-escolar.md](modelo-catalogo-escolar.md). **La migración no se ha aplicado en PostgreSQL.**
+- Pendiente: autorizar y aplicar la migración; endpoints y UI del catálogo.
 
 ## Limitaciones conocidas
 

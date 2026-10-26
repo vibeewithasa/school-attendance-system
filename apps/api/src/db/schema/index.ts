@@ -1,2 +1,2 @@
-// Los esquemas por modulo se reexportan aqui. Sin tablas hasta el primer modulo de negocio.
-export {};
+// Los esquemas por modulo se reexportan aqui.
+export * from './school-catalog.js';

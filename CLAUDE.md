@@ -64,6 +64,8 @@ la persona responsable lo pida.
 - Esquema en `apps/api/src/db/schema/`; migraciones generadas con `pnpm --filter @eta15/api db:generate`
   y versionadas en `apps/api/drizzle/`.
 - Revisar el SQL generado antes de aplicarlo. Aplicar (`db:migrate`) solo con autorización explícita.
+- Lo que Drizzle no expresa (EXCLUDE, triggers) va en una migración manual (`drizzle-kit generate --custom`) y se prueba
+  en `apps/api/test/*.migration.test.ts` con PGlite (en memoria; nunca contra `eta15_dev`).
 - Prohibido editar migraciones ya aplicadas; se corrige con una migración nueva.
 - Migraciones destructivas (DROP, TRUNCATE, cambios de tipo con pérdida) requieren aprobación y respaldo.
 

@@ -1,0 +1,227 @@
+{
+  "id": "818b6555-9295-43a6-8754-e00f556cac97",
+  "prevId": "e848ad54-df6e-43e8-a9fb-acda05a1e62a",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.groups": {
+      "name": "groups",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "school_year_id": {
+          "name": "school_year_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "grade": {
+          "name": "grade",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "shift": {
+          "name": "shift",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "groups_school_year_id_fkey": {
+          "name": "groups_school_year_id_fkey",
+          "tableFrom": "groups",
+          "columnsFrom": [
+            "school_year_id"
+          ],
+          "tableTo": "school_years",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "restrict",
+          "onDelete": "restrict"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "groups_year_grade_code_shift_key": {
+          "name": "groups_year_grade_code_shift_key",
+          "columns": [
+            "school_year_id",
+            "grade",
+            "code",
+            "shift"
+          ],
+          "nullsNotDistinct": true
+        },
+        "groups_id_school_year_id_key": {
+          "name": "groups_id_school_year_id_key",
+          "columns": [
+            "id",
+            "school_year_id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "groups_grade_range": {
+          "name": "groups_grade_range",
+          "value": "\"groups\".\"grade\" BETWEEN 1 AND 3"
+        },
+        "groups_code_length": {
+          "name": "groups_code_length",
+          "value": "char_length(\"groups\".\"code\") BETWEEN 1 AND 10"
+        },
+        "groups_code_format": {
+          "name": "groups_code_format",
+          "value": "\"groups\".\"code\" ~ '^[A-Z0-9]+([ -][A-Z0-9]+)*$'"
+        },
+        "groups_shift_values": {
+          "name": "groups_shift_values",
+          "value": "\"groups\".\"shift\" IN ('matutino', 'vespertino')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.school_years": {
+      "name": "school_years",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "starts_on": {
+          "name": "starts_on",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ends_on": {
+          "name": "ends_on",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "school_years_single_active_idx": {
+          "name": "school_years_single_active_idx",
+          "columns": [
+            {
+              "expression": "is_active",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "where": "\"school_years\".\"is_active\"",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "school_years_name_key": {
+          "name": "school_years_name_key",
+          "columns": [
+            "name"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "school_years_name_not_blank": {
+          "name": "school_years_name_not_blank",
+          "value": "btrim(\"school_years\".\"name\") <> '' AND \"school_years\".\"name\" = btrim(\"school_years\".\"name\")"
+        },
+        "school_years_dates_ordered": {
+          "name": "school_years_dates_ordered",
+          "value": "\"school_years\".\"ends_on\" > \"school_years\".\"starts_on\""
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "views": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
