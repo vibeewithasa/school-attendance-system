@@ -23,7 +23,9 @@
   **aplicadas en `eta15_dev` el 2026-10-25** con respaldo previo y verificadas en PostgreSQL 18 real.
   Detalle en [modelo-catalogo-escolar.md](modelo-catalogo-escolar.md).
 - Preparada, sin commit ni aplicar: migración 0002 (`groups.expected_entry_time`, hora de entrada por grupo).
-- Pendiente: aplicar 0002 con respaldo; endpoints y UI del catálogo; fusionar la rama a `main` (requiere revisión).
+- 0002 (`groups.expected_entry_time`, commit `1cd551a`) **aplicada en `eta15_dev`** con respaldo y verificada en PostgreSQL 18 real.
+  Drizzle se ejecuta solo con `pnpm db:generate|db:check|db:migrate` (envoltorios protegidos, ver CLAUDE.md).
+- Pendiente: endpoints y UI del catálogo; fusionar la rama a `main` (requiere revisión).
 
 ## Limitaciones conocidas
 

@@ -1,6 +1,6 @@
 # Modelo del catálogo escolar (`school_years`, `groups`)
 
-Estado: **migraciones 0000 y 0001 aplicadas en `eta15_dev` (PostgreSQL 18.0 local) el 2026-10-25**; ver [Aplicación real](#aplicación-real-en-eta15_dev). Esquema Drizzle:
+Estado: **migraciones 0000, 0001 y 0002 aplicadas en `eta15_dev` (PostgreSQL 18.0 local) el 2026-10-25**; ver [Aplicación real](#aplicación-real-en-eta15_dev). Esquema Drizzle:
 `apps/api/src/db/schema/school-catalog.ts`. Migraciones: `apps/api/drizzle/0000_school_catalog.sql` (generada)
 y `0001_school_catalog_integrity.sql` (escrita a mano, registrada en el journal de Drizzle).
 
@@ -22,16 +22,16 @@ school_years 1 ──< groups
 
 ### `groups`
 
-| Columna                    | Tipo         | Notas                                                                                                             |
-| -------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------- |
-| `id`                       | uuid PK      | `uuidv7()`                                                                                                        |
-| `school_year_id`           | uuid FK      | `NOT NULL` → `school_years(id)`, `ON DELETE/UPDATE RESTRICT`                                                      |
-| `grade`                    | smallint     | 1 a 3                                                                                                             |
-| `code`                     | text         | Identificador del grupo, 1–10 caracteres, **ya normalizado** (ver abajo)                                          |
-| `shift`                    | text NULL    | `matutino` / `vespertino`; `NULL` si no se distinguen turnos                                                      |
-| `expected_entry_time`      | time(0) NULL | Hora de entrada esperada (hora local, sin zona horaria); `NULL` = sin configurar. Migración 0002, **no aplicada** |
-| `is_active`                | boolean      | Por defecto `true`                                                                                                |
-| `created_at`, `updated_at` | timestamptz  | Igual que arriba                                                                                                  |
+| Columna                    | Tipo         | Notas                                                                                                      |
+| -------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------- |
+| `id`                       | uuid PK      | `uuidv7()`                                                                                                 |
+| `school_year_id`           | uuid FK      | `NOT NULL` → `school_years(id)`, `ON DELETE/UPDATE RESTRICT`                                               |
+| `grade`                    | smallint     | 1 a 3                                                                                                      |
+| `code`                     | text         | Identificador del grupo, 1–10 caracteres, **ya normalizado** (ver abajo)                                   |
+| `shift`                    | text NULL    | `matutino` / `vespertino`; `NULL` si no se distinguen turnos                                               |
+| `expected_entry_time`      | time(0) NULL | Hora de entrada esperada (hora local, sin zona horaria); `NULL` = sin configurar. Migración 0002, aplicada |
+| `is_active`                | boolean      | Por defecto `true`                                                                                         |
+| `created_at`, `updated_at` | timestamptz  | Igual que arriba                                                                                           |
 
 ## Reglas definitivas
 
@@ -98,10 +98,21 @@ UUID v7 generables en cliente y ordenados en el tiempo; `updated_at` por trigger
 
 - `0000_school_catalog.sql`: tablas, FK, checks, uniques e índice parcial. Sin `DROP`/`TRUNCATE`.
 - `0001_school_catalog_integrity.sql`: `EXCLUDE` de traslape, función y triggers `set_updated_at`. Manual porque Drizzle no los expresa.
-- `0002_group_expected_entry_time.sql` (generada, **no aplicada**): `ALTER TABLE groups ADD COLUMN expected_entry_time time(0)` + dos `CHECK` (`< TIME '24:00:00'` y `EXTRACT(SECOND FROM ...) = 0`). No destructiva; las migraciones 0000 y 0001 no se modificaron. Probada en PGlite como migración incremental sobre grupos ya existentes (`test/school-catalog.entry-time.migration.test.ts`).
-- **Journal** (ahora con 3 entradas, `0000`–`0002`): `meta/_journal.json` registra `idx 0` y `idx 1` con marcas `when` crecientes (el migrador omite una migración cuya marca no supere la última aplicada). Verificado con `readMigrationFiles` (el mismo lector que usa el migrador de Drizzle: encuentra ambas, en orden, con hash distinto), `drizzle-kit check` ("Everything's fine") y `drizzle-kit generate` ("No schema changes"). **No se ejecutó `migrate`.**
+- `0002_group_expected_entry_time.sql` (generada con el envoltorio protegido y **aplicada**; commit `1cd551a`): `ALTER TABLE groups ADD COLUMN expected_entry_time time(0)` + dos `CHECK` (`< TIME '24:00:00'` y `EXTRACT(SECOND FROM ...) = 0`). No destructiva; las migraciones 0000 y 0001 no se modificaron. Probada en PGlite como migración incremental sobre grupos ya existentes (`test/school-catalog.entry-time.migration.test.ts`).
+- **Journal** (ahora con 3 entradas, `0000`–`0002`): `meta/_journal.json` registra `idx 0`, `1` y `2` con marcas `when` crecientes (el migrador omite una migración cuya marca no supere la última aplicada). Verificado con `readMigrationFiles` (el mismo lector que usa el migrador de Drizzle: encuentra las tres, en orden, con hash distinto), `drizzle-kit check` ("Everything's fine") y `generate` ("No schema changes"). `drizzle.__drizzle_migrations` en `eta15_dev` registra las 3 (id 1–3).
 
 ## Aplicación real en `eta15_dev`
+
+### Migración 0002 (2026-10-25, tras el commit `1cd551a`)
+
+- **Preflight** (solo lectura): destino 127.0.0.1:5432 / `eta15_dev` / `eta15_app`; `server_version_num` 180000; tablas `groups` y `school_years` (0 filas); 2 migraciones registradas; la columna y sus constraints no existían.
+- **Respaldo**: `C:\Users\asahe\Backups\ETA15\eta15_dev_pre-0002_20261025-235720.dump` (9801 bytes), `pg_dump` y `pg_restore --list` con código 0, SHA-256 `BD1D88D8765818F10E1B5EE1896D3C7F3DD8DEC7D77C7AF1942765D1E3C32E91`. El respaldo anterior se conservó. No se restauró.
+- **Aplicación**: `pnpm db:migrate` (envoltorio protegido → `drizzle-kit migrate`), solo la 0002 estaba pendiente.
+- **Verificado en PG 18 real**: columna `time without time zone`, precisión 0, nullable; constraints `groups_expected_entry_time_range` y `_minute` presentes y el resto de las de `groups` y `school_years` intactas; triggers y función sin cambios; sin tablas nuevas. Comportamiento (datos ficticios, `BEGIN … ROLLBACK`): `NULL`, 07:00, 07:50, 13:05, 00:00 y 23:59 aceptadas; `07:00:30`, `07:50:01` y `24:00:00` rechazadas (`23514`), `25:00` rechazada (`22008`), también en `UPDATE`; unicidad, formato de `code`, grado, ciclo vigente único, traslape, FK y `RESTRICT` siguen funcionando; el trigger impone `updated_at = now()` al cambiar la hora. Tras el `ROLLBACK`: 0 filas en ambas tablas.
+- **Límite**: `eta15_dev` no tenía grupos al migrar, así que "los grupos existentes conservan su valor `NULL`" se probó solo en PGlite (migración incremental con filas previas), no en el servicio real.
+- _Notas_: dos comprobaciones fallaron por errores de **mi script de prueba** (comparación de `inet` con máscara `/32` en el preflight, y una prueba de `updated_at` que ignoraba que `now()` es constante dentro de una transacción); se corrigieron y repitieron sin tocar la base.
+
+### Migraciones 0000 y 0001
 
 - **Fecha**: 2026-10-25. Servidor: PostgreSQL 18.0 (x86_64-windows), `127.0.0.1:5432`, base `eta15_dev`, rol `eta15_app` (sin privilegios administrativos).
 - **Preflight** (solo lectura): destino correcto; sin tablas, funciones, triggers ni esquema `drizzle`; única extensión `plpgsql`.
