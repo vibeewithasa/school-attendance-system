@@ -35,7 +35,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE eta15_app REVOKE EXECUTE ON FUNCTIONS FROM PUB
 GRANT USAGE ON SCHEMA public TO eta15_api;            -- sin CREATE
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO eta15_api;
 
-GRANT INSERT ON users, user_roles, sessions, auth_tokens, audit_events, role_permissions TO eta15_api;
+GRANT INSERT ON users, user_roles, sessions, auth_tokens, audit_events TO eta15_api;   -- NO role_permissions (solo lectura)
 GRANT UPDATE (display_name, email, email_kind, email_verified_at, status, password_hash, password_changed_at,
               must_change_password, last_login_at, failed_login_count, last_failed_login_at, locked_until)
   ON users TO eta15_api;
@@ -43,7 +43,9 @@ GRANT UPDATE (revoked_at, revoked_by) ON user_roles TO eta15_api;
 GRANT UPDATE (last_seen_at, idle_expires_at, mfa_verified_at, revoked_at, revoked_reason, revoked_by)
   ON sessions TO eta15_api;
 GRANT UPDATE (authorized_at, authorized_by, verification_method, used_at, invalidated_at) ON auth_tokens TO eta15_api;
-GRANT DELETE ON sessions, auth_tokens, role_permissions TO eta15_api;   -- purga y edicion de permisos NO de autoridad
+GRANT DELETE ON sessions, auth_tokens TO eta15_api;   -- purga de sesiones/tokens vencidos
+-- role_permissions es de SOLO LECTURA para la API (tools/db/privileges/0001-role-permissions-select-only.sql): los permisos de
+-- los roles cambian por migracion (eta15_app) hasta que exista una administracion de roles revisada.
 
 -- Unicos EXECUTE necesarios: los ayudantes que invocan los triggers.
 GRANT EXECUTE ON FUNCTION auth_is_schema_owner(), auth_lock_authority(uuid, text), auth_current_actor() TO eta15_api;

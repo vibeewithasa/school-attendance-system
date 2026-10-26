@@ -249,12 +249,26 @@ describe('la API sigue pudiendo operar con los privilegios minimos (nada del flu
         [u],
       ),
     ).rejects.toThrow(/Solo el propietario del esquema/);
+    // role_permissions es de solo lectura para la API: se deniega por privilegio (SQLSTATE 42501), no por el trigger
     await expect(
       api.query(
         `insert into role_permissions (role_id, role_domain, permission_id, permission_domain, scope)
          select r.id, r.domain, p.id, p.domain, 'all' from roles r, permissions p where r.key='prefectura' and p.key='roles:grant_school'`,
       ),
-    ).rejects.toThrow(/permisos de autoridad solo los cambia el propietario/);
+    ).rejects.toMatchObject({ code: '42501' });
+    await expect(api.query(`delete from role_permissions where false`)).rejects.toMatchObject({
+      code: '42501',
+    });
+    // y el propietario (eta15_app) SI sigue pudiendo editar permisos (el trigger sigue aplicando las reglas de dominio)
+    await expect(
+      owner.query(
+        `insert into role_permissions (role_id, role_domain, permission_id, permission_domain, scope)
+         select r.id, r.domain, p.id, p.domain, 'all' from roles r, permissions p where r.key='prefectura' and p.key='roles:grant_school'`,
+      ),
+    ).resolves.toBeDefined();
+    await owner.query(
+      `delete from role_permissions where role_id = (select id from roles where key='prefectura') and permission_id = (select id from permissions where key='roles:grant_school')`,
+    );
   });
   it('crea una cuenta pendiente, concede un rol, abre y revoca sesiones y audita', async () => {
     await api.query(`select set_config('eta15.actor_id', $1, false)`, [direccion]);
@@ -326,5 +340,49 @@ describe('la API sigue pudiendo operar con los privilegios minimos (nada del flu
         [u, tecnico],
       ),
     ).rejects.toThrow(/roles:grant_school/);
+  });
+});
+
+describe('tools/db/privileges/0001-role-permissions-select-only.sql', () => {
+  const file = readFileSync(
+    join(
+      import.meta.dirname,
+      '..',
+      '..',
+      '..',
+      '..',
+      'tools',
+      'db',
+      'privileges',
+      '0001-role-permissions-select-only.sql',
+    ),
+    'utf8',
+  );
+  const writes = async () =>
+    (
+      await owner.query<{ p: string }>(
+        `select p from unnest(array['INSERT','UPDATE','DELETE']) p where has_table_privilege('eta15_api','role_permissions',p) order by 1`,
+      )
+    ).rows.map((r) => r.p);
+
+  it('retira INSERT/DELETE a una instalacion antigua, es idempotente y no toca otras tablas', async () => {
+    await owner.query(`grant insert, delete on role_permissions to eta15_api`);
+    expect(await writes()).toEqual(['DELETE', 'INSERT']);
+    const matrix = () =>
+      owner.query(
+        `select c.relname, p, has_table_privilege('eta15_api', c.oid, p) as v from pg_class c cross join unnest(array['SELECT','INSERT','UPDATE','DELETE']) p
+          where c.relnamespace = 'public'::regnamespace and c.relkind = 'r' and c.relname <> 'role_permissions' order by 1, 2`,
+      );
+    const before = (await matrix()).rows;
+    await owner.query(file);
+    expect(await writes()).toEqual([]);
+    expect((await matrix()).rows).toEqual(before);
+    await owner.query(file); // segunda ejecucion: sin efecto ni error
+    expect(await writes()).toEqual([]);
+    expect(await api.query(`select count(*)::int n from role_permissions`)).toBeDefined(); // SELECT intacto
+  });
+
+  it('falla sin dejar nada aplicado si lo ejecuta quien no es propietario', async () => {
+    await expect(api.query(file)).rejects.toThrow(/./);
   });
 });

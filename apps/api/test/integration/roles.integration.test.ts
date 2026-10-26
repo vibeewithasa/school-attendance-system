@@ -161,20 +161,17 @@ describe('comprobaciones POSITIVAS como eta15_api', () => {
     );
     expect(r.rows[0]).toEqual({ dueno: false, autoridad: false, actor: null });
   });
-  it('INSERT permitido (auditoria) y edicion de permisos NO de autoridad, con los triggers funcionando; todo revertido', async () => {
+  it('INSERT permitido (auditoria) y lectura de permisos por rol; todo revertido', async () => {
     await rolledBack(api, async () => {
       await api.query(
         `insert into audit_events (event_type, outcome, details) values ('auth.prueba', 'success', '{"nota":"prueba de integracion"}')`,
       );
-      await api.query(
-        `insert into role_permissions (role_id, role_domain, permission_id, permission_domain, scope)
-         select r.id, r.domain, p.id, p.domain, 'assigned_groups' from roles r, permissions p where r.key='control_acceso' and p.key='students:read'`,
-      );
-      await api.query(
-        `delete from role_permissions where role_id=(select id from roles where key='control_acceso') and permission_id=(select id from permissions where key='students:read')`,
-      );
       const n = await api.query<{ n: number }>(`select count(*)::int n from audit_events`);
-      expect(n.rows[0]!.n).toBe(3); // el evento manual + alta + baja de permiso (trigger de auditoria con EXECUTE concedido)
+      expect(n.rows[0]!.n).toBe(1);
+      const grants = await api.query<{ n: number }>(
+        `select count(*)::int n from user_roles ur join role_permissions rp on rp.role_id = ur.role_id`,
+      );
+      expect(grants.rows[0]!.n).toBe(0); // la consulta de permisos del servicio de sesiones es ejecutable
     });
     const after = await owner.query<{ n: number }>(`select count(*)::int n from audit_events`);
     expect(after.rows[0]!.n).toBe(0); // nada persistio
@@ -260,20 +257,21 @@ describe('comprobaciones NEGATIVAS como eta15_api (operaciones efectivas)', () =
       await denied(api, `update drizzle.__drizzle_migrations set hash = hash where false`),
     ).toBeTruthy();
   });
-  it('no puede delegar ni quitar permisos de AUTORIDAD (lo rechaza el trigger, incluso con el INSERT revertido)', async () => {
-    expect(
+  it('role_permissions es de SOLO LECTURA: INSERT, UPDATE y DELETE denegados por privilegio (SQLSTATE 42501), tambien para permisos de autoridad', async () => {
+    // `denied` exige SQLSTATE 42501: se deniega ANTES de llegar al trigger, sin depender del idioma del servidor.
+    for (const key of ['roles:grant_school', 'students:read']) {
       await denied(
         api,
         `insert into role_permissions (role_id, role_domain, permission_id, permission_domain, scope)
-         select r.id, r.domain, p.id, p.domain, 'all' from roles r, permissions p where r.key='prefectura' and p.key='roles:grant_school'`,
-      ),
-    ).toMatch(/permisos de autoridad solo los cambia el propietario/);
-    expect(
-      await denied(
-        api,
-        `delete from role_permissions where permission_id = (select id from permissions where key='roles:grant_school')`,
-      ),
-    ).toMatch(/permisos de autoridad solo los cambia el propietario/);
+         select r.id, r.domain, p.id, p.domain, 'all' from roles r, permissions p where r.key='prefectura' and p.key='${key}'`,
+      );
+    }
+    await denied(api, `delete from role_permissions where false`);
+    await denied(
+      api,
+      `delete from role_permissions where permission_id = (select id from permissions where key='roles:grant_school')`,
+    );
+    await denied(api, `update role_permissions set scope = scope where false`);
   });
 });
 
@@ -298,7 +296,7 @@ describe('privilegios EFECTIVOS (catalogo, sin ejecutar DDL destructivo)', () =>
     users: [true, true, true, false],
     roles: [true, false, false, false],
     permissions: [true, false, false, false],
-    role_permissions: [true, true, false, true],
+    role_permissions: [true, false, false, false], // solo lectura (tools/db/privileges/0001)
     user_roles: [true, true, true, false],
     sessions: [true, true, true, true],
     auth_tokens: [true, true, true, true],
