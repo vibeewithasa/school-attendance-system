@@ -49,7 +49,9 @@ pnpm typecheck; pnpm lint; pnpm test; pnpm build
 - Archivos en `kebab-case`; componentes React en `PascalCase`; textos de interfaz en español (es-MX).
 - Prettier es la autoridad de formato; ESLint debe quedar sin errores.
 - Archivos de texto UTF-8 **sin BOM**, finales de línea según `.gitattributes`.
-- `/health` solo indica que el proceso HTTP responde. Un readiness con base de datos será un endpoint distinto.
+- `/health` solo indica que el proceso HTTP responde (sin tocar la BD); `/ready` ejecuta `SELECT 1` real. No mezclarlos.
+  Las respuestas y logs de `/ready` nunca incluyen mensajes de error de la BD (solo códigos). Ver `docs/architecture/base-de-datos-local.md`.
+- Pruebas de integración: `pnpm test:integration` (requiere `DB_PASSWORD` en `apps/api/.env`; falla si falta, nunca se omite).
 
 ## 7. Estrategia Git
 

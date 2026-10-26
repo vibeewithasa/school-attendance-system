@@ -15,9 +15,14 @@
 | PostgreSQL local            | Operativo          | Base `eta15_dev`, rol `eta15_app` (sin privilegios administrativos). Ver ADR 0003     |
 | Emblema institucional       | Pendiente          | No está en el repositorio; `Emblem.tsx` es un marcador                                |
 
+## Sprint 1 (en curso)
+
+- Hecho: pool de PostgreSQL con timeouts, `GET /ready` (200/503), cierre ordenado del pool, pruebas unitarias e integración.
+  Detalle en [base-de-datos-local.md](base-de-datos-local.md).
+- Pendiente: primer modelo escolar y su migración (revisada antes de aplicar).
+
 ## Limitaciones conocidas
 
-- `/health` es liveness: no verifica PostgreSQL. Falta un endpoint de readiness con conexión real.
-- La API aún no usa la base de datos; no hay prueba de integración con PostgreSQL.
+- `/health` es liveness y `/ready` es readiness (ver base-de-datos-local.md). La API aún no tiene tablas ni migraciones.
 - Sin autenticación ni autorización.
 - Sin CI ni Git remoto.
