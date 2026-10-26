@@ -16,7 +16,9 @@ Monolito modular en un monorepo pnpm. Desarrollo en Windows 11 nativo (sin WSL n
 . .\tools\env.ps1                      # activa Node 24 y rutas de Android/psql en esta sesión
 pnpm install
 Copy-Item apps\api\.env.example apps\api\.env   # luego escribe DB_PASSWORD solo en tu .env local
-.\tools\set-db-password.ps1             # pide DB_PASSWORD de forma oculta y la guarda en apps\api\.env
+.\tools\set-db-password.ps1             # DB_PASSWORD de eta15_api (API) -> apps\api\.env
+.\tools\set-db-password.ps1 -Target migrator   # eta15_app (migraciones) -> apps\api\.env.migrator
+pnpm db:whoami                         # comprueba con que rol conecta cada configuracion
 pnpm dev:api                           # http://127.0.0.1:3000/health  y  /ready
 pnpm dev:web                           # http://127.0.0.1:5173
 ```

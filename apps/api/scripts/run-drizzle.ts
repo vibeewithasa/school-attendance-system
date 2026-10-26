@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { checkOwnerConnection, readEnvFile } from './db-identity.js';
 import { API_DIR, DRIZZLE_DIR, destructiveStatements, preflight } from './drizzle-guard.js';
 
 /**
@@ -29,8 +30,26 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
-if (command === 'migrate' && existsSync(join(API_DIR, '.env')))
-  process.loadEnvFile(join(API_DIR, '.env'));
+if (command === 'migrate') {
+  // Las migraciones usan SIEMPRE las credenciales del propietario (.env.migrator), nunca las de la API (.env).
+  const migrator = readEnvFile('.env.migrator');
+  if (!migrator) {
+    console.error(
+      'Falta apps/api/.env.migrator (credenciales del propietario/migrador; ignorado por Git).',
+    );
+    process.exit(1);
+  }
+  try {
+    const identity = await checkOwnerConnection(migrator); // identidad verificada ANTES de modificar nada
+    console.log(`Migrador verificado: ${identity.usuario} (propietario de la base).`);
+  } catch (error) {
+    console.error(`Identidad del migrador no valida: ${(error as Error).message}`);
+    process.exit(1);
+  }
+  for (const key of ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'] as const) {
+    if (migrator[key] !== undefined) process.env[key] = migrator[key];
+  }
+}
 
 const sqlFiles = () => new Set(readdirSync(DRIZZLE_DIR).filter((f) => f.endsWith('.sql')));
 const metaFiles = () => new Set(readdirSync(join(DRIZZLE_DIR, 'meta')));

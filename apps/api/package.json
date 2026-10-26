@@ -15,6 +15,7 @@
     "db:generate": "tsx scripts/run-drizzle.ts generate",
     "db:migrate": "tsx scripts/run-drizzle.ts migrate",
     "db:check": "tsx scripts/run-drizzle.ts check",
+    "db:whoami": "tsx scripts/db-identity.ts",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {

@@ -39,7 +39,7 @@ async function freePort(): Promise<number> {
 export interface TempPostgres {
   port: number;
   /** Nueva conexion; por defecto como superusuario/propietario postgres. */
-  connect(user?: string): Promise<pg.Client>;
+  connect(user?: string, database?: string): Promise<pg.Client>;
   stop(): Promise<void>;
 }
 
@@ -91,8 +91,8 @@ export async function startTempPostgres(): Promise<TempPostgres> {
   const clients: pg.Client[] = [];
   return {
     port,
-    async connect(user = 'postgres') {
-      const c = new pg.Client({ host: '127.0.0.1', port, user, database: 'postgres' });
+    async connect(user = 'postgres', database = 'postgres') {
+      const c = new pg.Client({ host: '127.0.0.1', port, user, database });
       await c.connect();
       clients.push(c);
       return c;

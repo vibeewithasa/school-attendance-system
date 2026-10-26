@@ -6,7 +6,7 @@ import { createDatabase, type DatabaseHandle } from '../../src/db/client.js';
 
 /**
  * Integracion REAL con PostgreSQL local (eta15_dev). Solo lectura: no crea tablas ni migra.
- * Requiere apps/api/.env con DB_PASSWORD. Si falta, la prueba FALLA (no se omite en silencio).
+ * Requiere apps/api/.env con el rol de EJECUCION eta15_api y su DB_PASSWORD. Si falta, la prueba FALLA (no se omite en silencio).
  * Ejecutar con:  pnpm test:integration
  */
 describe('PostgreSQL local (integracion)', () => {
@@ -16,7 +16,7 @@ describe('PostgreSQL local (integracion)', () => {
   beforeAll(() => {
     if (!env.DB_PASSWORD) {
       throw new Error(
-        'Falta DB_PASSWORD. Define la contrasena de eta15_app en apps/api/.env (ignorado por Git) antes de ejecutar las pruebas de integracion.',
+        'Falta DB_PASSWORD. Define la contrasena de eta15_api en apps/api/.env (ignorado por Git; use tools\\set-db-password.ps1) antes de ejecutar las pruebas de integracion.',
       );
     }
     handle = createDatabase(env);
@@ -30,7 +30,7 @@ describe('PostgreSQL local (integracion)', () => {
     await expect(handle.ping()).resolves.toBeUndefined();
   });
 
-  it('se conecta como eta15_app a eta15_dev, sin privilegios administrativos', async () => {
+  it('se conecta como eta15_api (rol de ejecucion, NO el propietario) a eta15_dev, sin privilegios administrativos', async () => {
     const result = await handle.db.execute<{
       usuario: string;
       base: string;
@@ -40,7 +40,8 @@ describe('PostgreSQL local (integracion)', () => {
              (select rolsuper from pg_roles where rolname = current_user) as superuser
     `);
     const row = result.rows[0];
-    expect(row).toEqual({ usuario: 'eta15_app', base: 'eta15_dev', superuser: false });
+    expect(row).toEqual({ usuario: 'eta15_api', base: 'eta15_dev', superuser: false });
+    expect(env.DB_USER).toBe('eta15_api');
   });
 
   it('GET /ready responde 200 con la base de datos real', async () => {

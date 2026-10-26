@@ -7,7 +7,7 @@ Referencia principal: **OWASP ASVS 5.0.0** — V6 (Autenticación), V7 (Sesiones
 
 | Elemento                                                                                                       | Estado                                                                                             |
 | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Esquema de 8 tablas y migraciones `0003` (esquema), `0004` (semilla), `0005` (integridad)                      | **Hechos, NO aplicados** en `eta15_dev`                                                            |
+| Esquema de 8 tablas y migraciones `0003` (esquema), `0004` (semilla), `0005` (integridad)                      | **Hechos y APLICADOS en `eta15_dev` (2026-10-26, commit `df82d6d`)**; ver `roles-postgresql.md`    |
 | Triggers de integridad (bootstrap, concesión, recuperación, tokens, sesiones, auditoría)                       | Hechos. Probados en PGlite (PG 18.6) y, la concurrencia, en un **clúster PG 18.0 real desechable** |
 | Lógica pura: `resolveAccess`, `grant-policy`, `resource-authorization`, `session-policy`                       | Hecha y probada (unitarias/contractuales)                                                          |
 | Hash de contraseñas, servicio de sesiones, CSRF, rate limiting, **endpoints**, MFA, CLI de bootstrap, frontend | **No implementados.** Nada de esto debe considerarse seguro todavía: solo está diseñado            |
@@ -199,22 +199,25 @@ Android: sesiones web y autorización offline son distintas. Refresh token opaco
 
 Reproducidos contra el esquema anterior con un rol de API simulado (no propietario, todos los privilegios de tabla) o con conexiones reales concurrentes:
 
-| #   | Riesgo confirmado                                                                   | Corrección                                        |
-| --- | ----------------------------------------------------------------------------------- | ------------------------------------------------- |
-| R1  | El rol de la API hacía bootstrap de `direccion` solo por estar el dominio vacío     | Solo propietario + acta + rol con `roles:grant_*` |
-| R2  | Al renunciar el único titular, el bootstrap se reabría sin acta                     | Cierre permanente por historial; recovery aparte  |
-| R3  | Se podía borrar el historial de `user_roles`                                        | Triggers `no_delete`/`no_truncate`                |
-| R4  | Cambiar `password_hash` no revocaba sesiones                                        | Trigger                                           |
-| R5  | Se creaban sesiones para cuentas pendientes                                         | Trigger de sesiones                               |
-| R6  | `roles.domain` mutable; rol de sistema borrable                                     | `roles_guard`, `permissions_guard`                |
-| R7  | La API podía **delegar autoridad** (`roles:grant_school` a prefectura)              | `is_authority` + propietario                      |
-| R8  | Cambios en `role_permissions` sin auditoría                                         | Trigger de auditoría                              |
-| R9  | La API creaba cuentas sin creador ni autoridad                                      | `users_enforce_creator`                           |
-| R10 | (Descartado) TRUNCATE de auditoría con la API sin privilegio                        | Ya bloqueado por privilegios; además trigger      |
-| C1  | **Dos bootstrap concurrentes crearon 2 primeros titulares** (PG 18.0 real)          | Bloqueo consultivo + `READ COMMITTED`             |
-| D1  | Diseño: el administrador veía el token de recuperación y podía suplantar al titular | Reclamo en dos partes (§6)                        |
-| D2  | `CHECK` con `NULL` aceptaba bootstrap **sin acta** (hallado por las pruebas)        | `IS NOT NULL` explícito                           |
-| D3  | Ligar activación y consumo con `now()` era frágil (reloj de 1 ms en PGlite)         | `used_txid` (ID de transacción), no falseable     |
+| #   | Riesgo confirmado                                                                                                    | Corrección                                          |
+| --- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| R1  | El rol de la API hacía bootstrap de `direccion` solo por estar el dominio vacío                                      | Solo propietario + acta + rol con `roles:grant_*`   |
+| R2  | Al renunciar el único titular, el bootstrap se reabría sin acta                                                      | Cierre permanente por historial; recovery aparte    |
+| R3  | Se podía borrar el historial de `user_roles`                                                                         | Triggers `no_delete`/`no_truncate`                  |
+| R4  | Cambiar `password_hash` no revocaba sesiones                                                                         | Trigger                                             |
+| R5  | Se creaban sesiones para cuentas pendientes                                                                          | Trigger de sesiones                                 |
+| R6  | `roles.domain` mutable; rol de sistema borrable                                                                      | `roles_guard`, `permissions_guard`                  |
+| R7  | La API podía **delegar autoridad** (`roles:grant_school` a prefectura)                                               | `is_authority` + propietario                        |
+| R8  | Cambios en `role_permissions` sin auditoría                                                                          | Trigger de auditoría                                |
+| R9  | La API creaba cuentas sin creador ni autoridad                                                                       | `users_enforce_creator`                             |
+| R10 | (Descartado) TRUNCATE de auditoría con la API sin privilegio                                                         | Ya bloqueado por privilegios; además trigger        |
+| C1  | **Dos bootstrap concurrentes crearon 2 primeros titulares** (PG 18.0 real)                                           | Bloqueo consultivo + `READ COMMITTED`               |
+| D1  | Diseño: el administrador veía el token de recuperación y podía suplantar al titular                                  | Reclamo en dos partes (§6)                          |
+| D2  | `CHECK` con `NULL` aceptaba bootstrap **sin acta** (hallado por las pruebas)                                         | `IS NOT NULL` explícito                             |
+| D3  | Ligar activación y consumo con `now()` era frágil (reloj de 1 ms en PGlite)                                          | `used_txid` (ID de transacción), no falseable       |
+| F1  | Las 20 funciones eran ejecutables por `PUBLIC` (valor por defecto; no elevan privilegios por ser `SECURITY INVOKER`) | `REVOKE` + aserción final en 0005                   |
+| F2  | El privilegio `TRIGGER` permite adjuntar triggers propios y esquivar la política de concesión (**demostrado**)       | No se concede jamás; `04-audit-privileges.sql`      |
+| F3  | `pnpm test` ejecutaba también la suite del clúster desechable                                                        | `test/pgtemp/**` excluido; solo `pnpm test:pg-temp` |
 
 Descartados con evidencia: el rol de la API no puede alterar ni quitar el trigger de auditoría (_must be owner_); no puede UPDATE/DELETE/TRUNCATE auditoría; el dominio de un rol no cruza dominios (FK/CHECK); la concesión concurrente respeta la revocación (espera, 12/12 pruebas reales).
 

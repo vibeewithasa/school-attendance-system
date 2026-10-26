@@ -38,7 +38,7 @@ pnpm typecheck; pnpm lint; pnpm test; pnpm build
 - La contraseña de `eta15_app` la teclea la persona usuaria (`\password`); no se pasa por argumentos ni archivos.
 - Datos de alumnos: ninguno real en desarrollo, pruebas ni fixtures. Usar datos sintéticos.
 - La API escucha en 127.0.0.1 por defecto. Errores 5xx no exponen detalles internos.
-- El rol de la aplicación no es superusuario ni crea roles/bases.
+- El rol de la aplicación es `eta15_api` (mínimo privilegio, no propietario) y su contraseña vive en `apps/api/.env`; las migraciones y la consola usan `eta15_app` desde `apps/api/.env.migrator`. La API se niega a arrancar con un rol propietario/privilegiado, y `pnpm db:migrate` verifica que el rol sea el propietario. `pnpm db:whoami` comprueba ambas identidades. Nunca conceder `TRIGGER`, `TRUNCATE`, `REFERENCES` ni `ALL` a `eta15_api`.
 - Riesgo aceptado en desarrollo: `eta15_app` hereda `CONNECT`/`TEMPORARY` de `PUBLIC` sobre otras bases del servidor
   (ADR 0003). En producción el rol de ejecución de la API y el rol propietario de esquema/migraciones serán distintos.
 - Estado real del proyecto y módulos pendientes: `docs/architecture/estado-del-proyecto.md`. Decisiones: `docs/decisions/`.

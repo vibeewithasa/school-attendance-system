@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import type { Env } from '../config/env.js';
+import { IDENTITY_SQL, runtimeIdentityProblems, type IdentityRow } from './identity.js';
 import * as schema from './schema/index.js';
 
 /** Lo minimo que el resto de la API necesita saber de la base de datos. */
@@ -12,6 +13,11 @@ export interface Database {
   close(): Promise<void>;
   /** Suscribe un oyente a errores del pool (solo el codigo, nunca el mensaje). */
   onError?(listener: (code: string) => void): void;
+  /**
+   * Comprueba que la conexion usa un rol de EJECUCION (no propietario, sin privilegios de DDL ni administrativos).
+   * Devuelve los problemas (vacio = correcto). Rechaza si no hay conexion.
+   */
+  verifyRuntimeIdentity?(): Promise<string[]>;
 }
 
 export interface DatabaseHandle extends Database {
@@ -53,6 +59,11 @@ export function createDatabase(env: Env): DatabaseHandle {
     db,
     async ping() {
       await db.execute(sql`select 1`);
+    },
+    async verifyRuntimeIdentity() {
+      const result = await pool.query<IdentityRow>(IDENTITY_SQL);
+      const row = result.rows[0];
+      return row ? runtimeIdentityProblems(row) : ['no se pudo determinar la identidad del rol'];
     },
     close() {
       closing ??= pool.end();

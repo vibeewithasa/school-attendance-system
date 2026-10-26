@@ -30,13 +30,14 @@
 ## Auth/RBAC (rama `feat/auth-rbac`)
 
 - Catálogo escolar integrado en `main` (fast-forward, `2594a0e`).
-- Arquitectura propuesta, **pendiente de aprobación**: [auth-rbac.md](auth-rbac.md) y [ADR 0004](../decisions/0004-auth-sesiones-servidor-argon2id.md) (sesiones de servidor propias, Argon2id nativo, separación de dominios `school`/`technical`).
+- Arquitectura (esquema aplicado; servicios pendientes): [auth-rbac.md](auth-rbac.md) y [ADR 0004](../decisions/0004-auth-sesiones-servidor-argon2id.md) (sesiones de servidor propias, Argon2id nativo, separación de dominios `school`/`technical`).
 - Auditoría de seguridad hecha: 14 riesgos confirmados con evidencia y corregidos (bootstrap, recuperación, autoridad delegable, sesiones, concurrencia); ver auth-rbac.md §14.
-- Implementado: esquema de 8 tablas, migraciones `0003`–`0005` (**no aplicadas en `eta15_dev`**), triggers de integridad, semilla de roles/permisos, lógica pura de autorización (rol, recurso, campo) y política de sesiones. Pruebas: unitarias/contractuales, de esquema en PGlite y de concurrencia en un clúster PG 18 desechable (`pnpm test:pg-temp`).
+- Implementado: esquema de 8 tablas, migraciones `0003`–`0005` (**aplicadas en `eta15_dev` el 2026-10-26**, commit `df82d6d`, con respaldo previo; verificadas en el PostgreSQL 18 real, 40 comprobaciones con `ROLLBACK`; sin usuarios, sesiones, tokens ni auditoría), triggers de integridad, semilla de roles/permisos, lógica pura de autorización (rol, recurso, campo) y política de sesiones. Pruebas: unitarias/contractuales, de esquema en PGlite y de concurrencia en un clúster PG 18 desechable (`pnpm test:pg-temp`).
 - No implementado: hash de contraseñas, servicio de sesiones, CSRF, rate limiting, **endpoints**, MFA, CLI de bootstrap, frontend. Sin usuarios ni contraseñas en ningún lugar. No debe afirmarse que haya endpoints seguros: no existen.
 
 ## Limitaciones conocidas
 
-- `/health` es liveness y `/ready` es readiness (ver base-de-datos-local.md). La API aún no tiene tablas ni migraciones.
-- Sin autenticación ni autorización.
+- `/health` es liveness y `/ready` es readiness (ver base-de-datos-local.md). La API aún no usa las tablas del catálogo ni las de Auth.
+- Sin autenticación ni autorización operativas (el esquema existe; los servicios y endpoints no).
+- **Roles separados (2026-10-26)**: la API usa `eta15_api` (mínimo privilegio) y las migraciones `eta15_app` (propietario), con archivos de entorno distintos; verificado con 30 pruebas reales y 25 en clúster desechable. Residual: `PUBLIC` conserva `CONNECT` en `beauty_pos` y `postgres`; las contraseñas locales son débiles. Ver [roles-postgresql.md](roles-postgresql.md).
 - Sin CI ni Git remoto.
