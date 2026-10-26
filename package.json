@@ -1,0 +1,29 @@
+{
+  "name": "eta15",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Plataforma escolar ETA 15 - Escuela Secundaria Tecnica No. 15, Costa Rica, Sinaloa",
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev:api": "pnpm --filter @eta15/api dev",
+    "dev:web": "pnpm --filter @eta15/web-admin dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "test": "pnpm -r test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.2",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.0"
+  }
+}

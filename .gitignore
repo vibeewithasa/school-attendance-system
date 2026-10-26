@@ -1,0 +1,49 @@
+# Dependencias y builds
+node_modules/
+dist/
+build/
+coverage/
+.turbo/
+*.tsbuildinfo
+.vite/
+
+# Secretos y entorno local
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.keystore
+*.jks
+local.properties
+pgpass.conf
+
+# Logs y temporales
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.tmp/
+tmp/
+
+# IDE / SO
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Android / Gradle
+.gradle/
+**/build/
+.cxx/
+captures/
+*.apk
+*.aab
+*.iml
+
+# Claude Code (configuracion local)
+.claude/settings.local.json
+
+# Drizzle: no se ignoran las migraciones (apps/api/drizzle/)

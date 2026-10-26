@@ -1,0 +1,6 @@
+packages:
+  - apps/api
+  - apps/web-admin
+  - packages/*
+allowBuilds:
+  esbuild: true

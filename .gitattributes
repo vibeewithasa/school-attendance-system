@@ -1,0 +1,30 @@
+# Normaliza finales de linea: texto en LF por defecto
+* text=auto eol=lf
+
+# Scripts de Windows: CRLF
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Gradle wrapper: shell en LF, bat en CRLF
+gradlew text eol=lf
+gradlew.bat text eol=crlf
+
+# Binarios
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.jar binary
+*.keystore binary
+*.jks binary
+*.apk binary
+*.aab binary
+
+# Lockfiles: sin diff ruidoso
+pnpm-lock.yaml -diff
