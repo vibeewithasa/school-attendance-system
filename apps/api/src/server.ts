@@ -2,10 +2,14 @@ import { loadEnv } from './config/env.js';
 import { buildApp } from './app.js';
 import { createDatabase } from './db/client.js';
 import { checkRuntimeRole } from './db/runtime-guard.js';
+import { createPgSessionStore } from './modules/auth/session-store-pg.js';
 
 const env = loadEnv();
 const database = createDatabase(env);
-const app = await buildApp(env, { database });
+const app = await buildApp(env, {
+  database,
+  auth: { store: createPgSessionStore(database.pool) },
+});
 
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, 'cerrando servidor');
