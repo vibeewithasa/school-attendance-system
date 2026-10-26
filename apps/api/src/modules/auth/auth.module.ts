@@ -11,7 +11,10 @@ import type { Env } from '../../config/env.js';
 import { AppError } from '../../shared/errors.js';
 import { createAttemptLimiter } from './attempt-limiter.js';
 import { createAuthService } from './auth-service.js';
+import { adminUsersRoutes } from '../admin-users/admin-users.routes.js';
+import { createAdminUsersService } from '../admin-users/admin-users.service.js';
 import { authRoutes } from './auth.routes.js';
+import { createAuthGuards } from './guards.js';
 import { checkRequestOrigin, isUnsafeMethod, parseAllowedOrigins } from './csrf.js';
 import { createPasswordService, type PasswordService } from './password.js';
 import { createSessionService, type SessionService, type SessionStore } from './session-service.js';
@@ -92,6 +95,7 @@ export async function registerAuth(
     onIntegrityProblem: (code) =>
       app.log.error({ code }, 'hash de contrasena almacenado no valido'),
   });
+  const guards = createAuthGuards({ sessions, production: env.NODE_ENV === 'production' });
   const limiter = (max: number) =>
     createAttemptLimiter({ max, windowMs: limits.windowMs, now: limits.now });
 
@@ -108,7 +112,7 @@ export async function registerAuth(
       authRoutes(scope, {
         auth,
         sessions,
-        production: env.NODE_ENV === 'production',
+        guards,
         limiters: {
           ip: limiter(limits.ipFailures),
           pair: limiter(limits.pairFailures),
@@ -118,6 +122,20 @@ export async function registerAuth(
       });
     },
     { prefix: '/auth' },
+  );
+
+  // Administracion de cuentas: solo traduce HTTP al servicio; el actor sale de la sesion.
+  await app.register(
+    async (scope) => {
+      adminUsersRoutes(scope, {
+        service: createAdminUsersService({ store: options.store }),
+        guards,
+        mfaDeferredAllowed:
+          env.AUTH_MFA_ENFORCEMENT === 'deferred' && env.NODE_ENV !== 'production',
+        floodLimit: limits.floodOther,
+      });
+    },
+    { prefix: '/admin' },
   );
   return { sessions };
 }

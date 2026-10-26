@@ -1,7 +1,25 @@
+import { useState } from 'react';
 import { Link, Outlet } from 'react-router-dom';
 import { Emblem } from '../components/Emblem';
+import { useAuth } from '../features/auth/AuthProvider';
 
 export function Layout() {
+  const { state, logout } = useAuth();
+  const [closing, setClosing] = useState(false);
+  const [logoutError, setLogoutError] = useState(false);
+  const me = state.status === 'authenticated' ? state.me : null;
+
+  async function onLogout() {
+    setClosing(true);
+    setLogoutError(false);
+    try {
+      await logout();
+    } catch {
+      setLogoutError(true);
+      setClosing(false);
+    }
+  }
+
   return (
     <div className="flex min-h-screen flex-col">
       <a
@@ -11,13 +29,28 @@ export function Layout() {
         Saltar al contenido
       </a>
       <header className="bg-tinto-700 text-white">
-        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-3 px-4 py-3">
           <Emblem />
           <Link to="/" className="text-lg font-semibold tracking-wide">
             ETA 15 <span className="font-normal opacity-80">· Portal administrativo</span>
           </Link>
+          {me && (
+            <button
+              type="button"
+              onClick={onLogout}
+              disabled={closing}
+              className="ml-auto rounded-md border border-white/70 px-3 py-1.5 text-sm font-semibold hover:bg-tinto-800 disabled:opacity-70"
+            >
+              {closing ? 'Cerrando…' : 'Cerrar sesión'}
+            </button>
+          )}
         </div>
       </header>
+      {logoutError && (
+        <p role="alert" className="bg-tinto-50 px-4 py-2 text-center text-sm text-tinto-900">
+          No se pudo cerrar la sesión: revisa tu conexión e inténtalo de nuevo.
+        </p>
+      )}
       <main id="contenido" className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
         <Outlet />
       </main>

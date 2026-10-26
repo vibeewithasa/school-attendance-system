@@ -1,4 +1,4 @@
-﻿import { describe } from 'vitest';
+import { describe } from 'vitest';
 import { defineAuthHttpSuite } from './helpers/auth-http-suite.js';
 import { createApiRole } from './helpers/auth-fixtures.js';
 import { freshDb } from './helpers/pglite.js';

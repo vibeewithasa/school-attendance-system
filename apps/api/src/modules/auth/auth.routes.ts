@@ -8,36 +8,21 @@
  */
 import { z } from 'zod';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type {
-  ApiErrorBody,
-  AuthCsrfResponse,
-  AuthLoginResponse,
-  AuthMeResponse,
-} from '@eta15/shared-contracts';
+import type { AuthCsrfResponse, AuthLoginResponse, AuthMeResponse } from '@eta15/shared-contracts';
 import { createHash } from 'node:crypto';
 import type { AttemptLimiter } from './attempt-limiter.js';
 import type { AuthService } from './auth-service.js';
-import { CSRF_HEADER, csrfTokenFor, isValidCsrfToken } from './csrf.js';
+import { csrfTokenFor } from './csrf.js';
 import { normalizeEmail } from './email.js';
-import type { SessionService, VerifiedSession } from './session-service.js';
+import { errorBody, type AuthGuards } from './guards.js';
+import type { SessionService } from './session-service.js';
 
-export const DEV_COOKIE_NAME = 'eta15_session';
-export const PROD_COOKIE_NAME = '__Host-eta15_session';
-
-export interface AuthContext extends VerifiedSession {
-  /** Token de sesion en claro: solo para derivar CSRF y revocar; nunca se registra ni se devuelve. */
-  token: string;
-}
-declare module 'fastify' {
-  interface FastifyRequest {
-    auth?: AuthContext;
-  }
-}
+export { DEV_COOKIE_NAME, PROD_COOKIE_NAME, type AuthContext } from './guards.js';
 
 export interface AuthRoutesOptions {
   auth: AuthService;
   sessions: SessionService;
-  production: boolean;
+  guards: AuthGuards;
   limiters: { ip: AttemptLimiter; pair: AttemptLimiter; identity: AttemptLimiter };
   /** Tope de peticiones por minuto y por IP (inundacion), en login y en el resto de /auth. */
   floodLimit: { login: number; other: number };
@@ -50,50 +35,11 @@ const loginBody = z
   })
   .strict();
 
-const errorBody = (code: string, message: string, requestId: string): ApiErrorBody => ({
-  error: { code, message, requestId },
-});
-
 const sha256Hex = (text: string) => createHash('sha256').update(text).digest('hex');
 
 export function authRoutes(app: FastifyInstance, options: AuthRoutesOptions): void {
-  const { auth, sessions, production, limiters } = options;
-  const cookieName = production ? PROD_COOKIE_NAME : DEV_COOKIE_NAME;
-  const cookieAttrs = {
-    httpOnly: true,
-    secure: production,
-    sameSite: 'strict',
-    path: '/',
-  } as const;
-
-  const clearCookie = (reply: FastifyReply) => reply.clearCookie(cookieName, cookieAttrs);
-  const unauthenticated = (request: FastifyRequest, reply: FastifyReply) =>
-    reply.code(401).send(errorBody('UNAUTHENTICATED', 'Sesión no válida', request.id));
-
-  /** Exige sesion valida (revalidada en la base). Las sesiones con cambio de contrasena pendiente solo llegan a rutas que lo permiten. */
-  const sessionGuard =
-    (opts: { allowPasswordChange?: boolean } = {}) =>
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      const token = request.cookies[cookieName];
-      if (!token) return unauthenticated(request, reply);
-      const result = await sessions.verify(token);
-      if (!result.ok) {
-        clearCookie(reply);
-        return unauthenticated(request, reply);
-      }
-      if (result.user.mustChangePassword && !opts.allowPasswordChange) {
-        return reply
-          .code(403)
-          .send(errorBody('PASSWORD_CHANGE_REQUIRED', 'Debe cambiar su contraseña', request.id));
-      }
-      request.auth = { ...result, token };
-    };
-
-  const csrfGuard = async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.auth || !isValidCsrfToken(request.auth.token, request.headers[CSRF_HEADER])) {
-      return reply.code(403).send(errorBody('CSRF_INVALID', 'Solicitud no autorizada', request.id));
-    }
-  };
+  const { auth, sessions, guards, limiters } = options;
+  const { cookieName, cookieAttrs, clearCookie, sessionGuard, csrfGuard } = guards;
 
   const noStore = (
     _request: FastifyRequest,

@@ -1,7 +1,5 @@
 /**
- * Normalizacion del correo, unica para login y futuras altas: NFKC, sin espacios en los bordes y en minusculas
- * (la base exige `email = lower(btrim(email))`). No valida pertenencia a un dominio.
+ * Normalizacion del correo, unica para login y altas: se define en shared-contracts para que API y clientes coincidan
+ * (NFKC, sin espacios en los bordes y en minusculas; la base exige `email = lower(btrim(email))`).
  */
-export function normalizeEmail(raw: string): string {
-  return raw.normalize('NFKC').trim().toLowerCase();
-}
+export { normalizeEmail } from '@eta15/shared-contracts';

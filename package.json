@@ -17,6 +17,8 @@
     "db:generate": "pnpm --filter @eta15/api db:generate",
     "db:check": "pnpm --filter @eta15/api db:check",
     "db:whoami": "pnpm --filter @eta15/api db:whoami",
+    "auth:bootstrap": "pnpm --filter @eta15/api auth:bootstrap",
+    "dev:sandbox": "pnpm --filter @eta15/api dev:sandbox",
     "db:migrate": "pnpm --filter @eta15/api db:migrate",
     "test:integration": "pnpm --filter @eta15/api test:integration",
     "test:pg-temp": "pnpm --filter @eta15/api test:pg-temp",
