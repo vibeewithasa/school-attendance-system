@@ -7,6 +7,7 @@ import {
   pgTable,
   smallint,
   text,
+  time,
   timestamp,
   unique,
   uniqueIndex,
@@ -68,6 +69,11 @@ export const groups = pgTable(
     code: text('code').notNull(),
     /** Turno; NULL cuando la escuela no distingue turnos. */
     shift: text('shift'),
+    /**
+     * Hora de entrada esperada del grupo (hora local de la escuela, sin zona horaria, precision de minuto: segundos = 0).
+     * NULL = aun no configurada. Independiente de `shift`. Sin tolerancia: eso vendra con control de acceso.
+     */
+    expectedEntryTime: time('expected_entry_time', { precision: 0 }),
     isActive: boolean('is_active').notNull().default(true),
     ...timestamps,
   },
@@ -85,6 +91,13 @@ export const groups = pgTable(
     check('groups_code_length', sql`char_length(${t.code}) BETWEEN 1 AND 10`),
     check('groups_code_format', sql`${t.code} ~ '^[A-Z0-9]+([ -][A-Z0-9]+)*$'`),
     check('groups_shift_values', sql`${t.shift} IN ('matutino', 'vespertino')`),
+    // PostgreSQL acepta '24:00:00' como hora; no es una hora de entrada valida.
+    check('groups_expected_entry_time_range', sql`${t.expectedEntryTime} < TIME '24:00:00'`),
+    // Solo precision de minuto: los segundos deben ser 0 (07:00:00 si, 07:00:30 no).
+    check(
+      'groups_expected_entry_time_minute',
+      sql`EXTRACT(SECOND FROM ${t.expectedEntryTime}) = 0`,
+    ),
     unique('groups_year_grade_code_shift_key')
       .on(t.schoolYearId, t.grade, t.code, t.shift)
       .nullsNotDistinct(),

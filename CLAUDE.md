@@ -64,6 +64,8 @@ la persona responsable lo pida.
 - Esquema en `apps/api/src/db/schema/`; migraciones generadas con `pnpm --filter @eta15/api db:generate`
   y versionadas en `apps/api/drizzle/`.
 - Revisar el SQL generado antes de aplicarlo. Aplicar (`db:migrate`) solo con autorización explícita.
+- **Drizzle solo se ejecuta con los envoltorios protegidos** (`pnpm db:generate`, `pnpm db:check`, `pnpm db:migrate`; en `apps/api/scripts/`), nunca `drizzle-kit` directo. Fuerzan el directorio `apps/api` y, antes de actuar, comprueban: config y journal presentes y ordenados, esquema no vacío y sin menos tablas que el último snapshot, migraciones confirmadas en Git sin alterar, y SQL sin operaciones destructivas (`DROP`, `TRUNCATE`, `DELETE`, cambio de tipo, `RENAME`). Si el SQL generado es destructivo se descarta lo generado. `db:migrate` además exige `apps/api/drizzle` confirmado (sin cambios pendientes). No existen `--force` ni `--ignore-conflicts`; una migración destructiva intencional se escribe a mano (`--custom`) con la marca `-- eta15:allow-destructive` y aprobación explícita.
+- Antes de aplicar una migración a `eta15_dev`: preflight de solo lectura, respaldo `pg_dump -Fc` fuera del repo y verificado, y pruebas de comportamiento con datos ficticios dentro de `BEGIN … ROLLBACK`.
 - Lo que Drizzle no expresa (EXCLUDE, triggers) va en una migración manual (`drizzle-kit generate --custom`) y se prueba
   en `apps/api/test/*.migration.test.ts` con PGlite (en memoria; nunca contra `eta15_dev`).
 - Prohibido editar migraciones ya aplicadas; se corrige con una migración nueva.

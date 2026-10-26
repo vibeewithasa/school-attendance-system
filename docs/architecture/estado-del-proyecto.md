@@ -19,9 +19,11 @@
 
 - Hecho: pool de PostgreSQL con timeouts, `GET /ready` (200/503), cierre ordenado del pool, pruebas unitarias e integración.
   Detalle en [base-de-datos-local.md](base-de-datos-local.md).
-- Hecho en la rama `feat/school-catalog` (sin commit): esquema y migración de `school_years` y `groups`, probados en memoria.
-  Detalle en [modelo-catalogo-escolar.md](modelo-catalogo-escolar.md). **La migración no se ha aplicado en PostgreSQL.**
-- Pendiente: autorizar y aplicar la migración; endpoints y UI del catálogo.
+- Hecho en la rama `feat/school-catalog` (commit `ae13532`): esquema y migraciones 0000/0001 de `school_years` y `groups`,
+  **aplicadas en `eta15_dev` el 2026-10-25** con respaldo previo y verificadas en PostgreSQL 18 real.
+  Detalle en [modelo-catalogo-escolar.md](modelo-catalogo-escolar.md).
+- Preparada, sin commit ni aplicar: migración 0002 (`groups.expected_entry_time`, hora de entrada por grupo).
+- Pendiente: aplicar 0002 con respaldo; endpoints y UI del catálogo; fusionar la rama a `main` (requiere revisión).
 
 ## Limitaciones conocidas
 

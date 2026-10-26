@@ -47,6 +47,29 @@ describe('groupInput', () => {
     expect(groupInput.safeParse({ ...base, code: 'ABCDEFGHIJ' }).success).toBe(true);
     expect(groupInput.safeParse({ ...base, code: 'ABCDEFGHIJK' }).success).toBe(false);
   });
+  it('la hora de entrada es opcional (null) y no depende del turno', () => {
+    const parsed = groupInput.parse({ ...base, shift: 'matutino' });
+    expect(parsed.expectedEntryTime).toBeNull();
+    expect(groupInput.parse({ ...base, expectedEntryTime: '07:50' }).shift).toBeNull();
+  });
+  it.each([
+    ['07:00', '07:00:00'],
+    ['07:50', '07:50:00'],
+    ['13:05', '13:05:00'],
+    ['00:00', '00:00:00'],
+    ['23:59', '23:59:00'],
+    ['08:15:00', '08:15:00'],
+  ])('acepta la hora %s y la normaliza a %s', (input, expected) => {
+    expect(groupInput.parse({ ...base, expectedEntryTime: input }).expectedEntryTime).toBe(
+      expected,
+    );
+  });
+  it.each(['24:00', '25:00', '7:00', '07:5', '07:60', '07:00:30', '07.00', 'siete', '', ' 07:00'])(
+    'rechaza la hora %j',
+    (input) => {
+      expect(groupInput.safeParse({ ...base, expectedEntryTime: input }).success).toBe(false);
+    },
+  );
   it('acepta turnos conocidos', () => {
     expect(groupInput.safeParse({ ...base, shift: 'vespertino' }).success).toBe(true);
   });

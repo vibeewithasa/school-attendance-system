@@ -59,39 +59,43 @@ afterAll(async () => {
 });
 
 describe('historial de migraciones de Drizzle', () => {
-  it('el journal registra 0000 y 0001 en orden, con marcas de tiempo crecientes', () => {
+  const tags = [
+    '0000_school_catalog',
+    '0001_school_catalog_integrity',
+    '0002_group_expected_entry_time',
+  ];
+
+  it('el journal registra 0000, 0001 y 0002 en orden, con marcas de tiempo crecientes', () => {
     const journal = JSON.parse(readFileSync(join(dir, 'meta', '_journal.json'), 'utf8')) as {
       entries: Array<{ idx: number; tag: string; when: number }>;
     };
-    expect(journal.entries.map((e) => [e.idx, e.tag])).toEqual([
-      [0, '0000_school_catalog'],
-      [1, '0001_school_catalog_integrity'],
-    ]);
+    expect(journal.entries.map((e) => [e.idx, e.tag])).toEqual(tags.map((tag, i) => [i, tag]));
     // El migrador omite una migracion cuya marca no supere la ultima aplicada.
-    expect(journal.entries[1]!.when).toBeGreaterThan(journal.entries[0]!.when);
+    for (let i = 1; i < journal.entries.length; i++) {
+      expect(journal.entries[i]!.when).toBeGreaterThan(journal.entries[i - 1]!.when);
+    }
   });
 
-  it('readMigrationFiles (el lector del migrador) encuentra ambas con hash distinto', () => {
+  it('readMigrationFiles (el lector del migrador) encuentra todas con hash distinto', () => {
     const migrations = readMigrationFiles({ migrationsFolder: dir });
-    expect(migrations).toHaveLength(2);
-    expect(new Set(migrations.map((m) => m.hash)).size).toBe(2);
+    expect(migrations).toHaveLength(3);
+    expect(new Set(migrations.map((m) => m.hash)).size).toBe(3);
     expect(migrations[1]!.sql.join('\n')).toContain('school_years_no_overlap');
+    expect(migrations[2]!.sql.join('\n')).toContain('expected_entry_time');
   });
 
   it('cada migracion del journal tiene su snapshot', () => {
-    for (const tag of ['0000', '0001']) {
-      expect(() => readFileSync(join(dir, 'meta', `${tag}_snapshot.json`))).not.toThrow();
+    for (const tag of tags) {
+      const n = tag.slice(0, 4);
+      expect(() => readFileSync(join(dir, 'meta', `${n}_snapshot.json`))).not.toThrow();
     }
   });
 
   it('no contiene operaciones destructivas', () => {
-    const sql = ['0000_school_catalog.sql', '0001_school_catalog_integrity.sql']
-      .map((f) => readFileSync(join(dir, f), 'utf8'))
-      .join('\n');
+    const sql = tags.map((tag) => readFileSync(join(dir, `${tag}.sql`), 'utf8')).join('\n');
     expect(sql).not.toMatch(/\b(DROP|TRUNCATE|DELETE\s+FROM)\b/i);
   });
 });
-
 describe('school_years', () => {
   it('acepta un ciclo valido con id UUID', async () => {
     expect(await addYear('2025-2026', '2025-08-25', '2026-07-15')).toMatch(/^[0-9a-f-]{36}$/);

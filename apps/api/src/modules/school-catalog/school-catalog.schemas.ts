@@ -30,6 +30,16 @@ export function normalizeGroupCode(raw: string): string {
 
 export const GROUP_CODE_PATTERN = /^[A-Z0-9]+([ -][A-Z0-9]+)*$/;
 
+/**
+ * Hora de entrada local de la escuela ("HH:MM" o "HH:MM:00"), sin zona horaria. Se normaliza a "HH:MM:00",
+ * el formato en que la devuelve PostgreSQL (time(0)). Cualquier hora 00:00-23:59 es valida; los horarios
+ * no se limitan a 07:00 y 07:50.
+ */
+export const entryTime = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d(:00)?$/, 'Hora local HH:MM (00:00 a 23:59)')
+  .transform((v) => (v.length === 5 ? `${v}:00` : v));
+
 export const groupInput = z.object({
   schoolYearId: z.uuid(),
   grade: z.number().int().min(1).max(3),
@@ -44,6 +54,8 @@ export const groupInput = z.object({
         .regex(GROUP_CODE_PATTERN, 'Letras A-Z y digitos; separadores: un espacio o guion'),
     ),
   shift: z.enum(SHIFTS).nullable().default(null),
+  /** NULL = aun no configurada. Independiente del turno. */
+  expectedEntryTime: entryTime.nullable().default(null),
 });
 
 export type SchoolYearInput = z.infer<typeof schoolYearInput>;

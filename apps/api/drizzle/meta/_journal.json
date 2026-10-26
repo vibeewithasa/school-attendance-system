@@ -15,6 +15,13 @@
       "when": 1792996273573,
       "tag": "0001_school_catalog_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792997706283,
+      "tag": "0002_group_expected_entry_time",
+      "breakpoints": true
     }
   ]
 }
