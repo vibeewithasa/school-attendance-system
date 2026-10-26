@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { destructiveStatements } from '../scripts/drizzle-guard.js';
 
 /**
  * Aplica las migraciones de apps/api/drizzle sobre PostgreSQL EN MEMORIA (PGlite 0.5, que empaqueta
@@ -63,9 +64,12 @@ describe('historial de migraciones de Drizzle', () => {
     '0000_school_catalog',
     '0001_school_catalog_integrity',
     '0002_group_expected_entry_time',
+    '0003_auth_schema',
+    '0004_auth_seed_roles_permissions',
+    '0005_auth_integrity',
   ];
 
-  it('el journal registra 0000, 0001 y 0002 en orden, con marcas de tiempo crecientes', () => {
+  it('el journal registra todas las migraciones en orden, con marcas de tiempo crecientes', () => {
     const journal = JSON.parse(readFileSync(join(dir, 'meta', '_journal.json'), 'utf8')) as {
       entries: Array<{ idx: number; tag: string; when: number }>;
     };
@@ -78,8 +82,8 @@ describe('historial de migraciones de Drizzle', () => {
 
   it('readMigrationFiles (el lector del migrador) encuentra todas con hash distinto', () => {
     const migrations = readMigrationFiles({ migrationsFolder: dir });
-    expect(migrations).toHaveLength(3);
-    expect(new Set(migrations.map((m) => m.hash)).size).toBe(3);
+    expect(migrations).toHaveLength(tags.length);
+    expect(new Set(migrations.map((m) => m.hash)).size).toBe(tags.length);
     expect(migrations[1]!.sql.join('\n')).toContain('school_years_no_overlap');
     expect(migrations[2]!.sql.join('\n')).toContain('expected_entry_time');
   });
@@ -93,7 +97,7 @@ describe('historial de migraciones de Drizzle', () => {
 
   it('no contiene operaciones destructivas', () => {
     const sql = tags.map((tag) => readFileSync(join(dir, `${tag}.sql`), 'utf8')).join('\n');
-    expect(sql).not.toMatch(/\b(DROP|TRUNCATE|DELETE\s+FROM)\b/i);
+    expect(destructiveStatements(sql)).toEqual([]);
   });
 });
 describe('school_years', () => {

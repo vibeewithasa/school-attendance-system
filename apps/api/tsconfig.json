@@ -10,6 +10,7 @@
     "test",
     "drizzle.config.ts",
     "vitest.config.ts",
-    "vitest.integration.config.ts"
+    "vitest.integration.config.ts",
+    "vitest.pgtemp.config.ts"
   ]
 }

@@ -75,6 +75,8 @@ la persona responsable lo pida.
 
 - Cada módulo nuevo trae pruebas Vitest; `buildApp()` + `app.inject()` para HTTP sin abrir puertos.
 - Pruebas de integración con base de datos usan una base propia de pruebas, nunca `eta15_dev` con datos útiles.
+- Pruebas de concurrencia real (varias conexiones) usan un clúster PostgreSQL **desechable** en carpeta temporal y puerto propio (`pnpm test:pg-temp`), nunca el servicio ni `eta15_dev`.
+- Seguridad (Auth/RBAC): todo cambio a privilegios necesita pruebas adversariales (autoasignación, cruce de dominios, rol de API no propietario). Los permisos de autoridad (`is_authority`) solo cambian por migración. No se afirma que un endpoint es seguro mientras no exista y esté probado por HTTP; ver `docs/architecture/auth-rbac.md`.
 - Un cambio no está terminado sin `typecheck`, `lint` y `test` en verde. No declarar como ejecutadas pruebas que no se corrieron.
 
 ## 10. Prohibido sin autorización explícita

@@ -22,6 +22,27 @@
       "when": 1792997706283,
       "tag": "0002_group_expected_entry_time",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793001163803,
+      "tag": "0003_auth_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793001164965,
+      "tag": "0004_auth_seed_roles_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793001166120,
+      "tag": "0005_auth_integrity",
+      "breakpoints": true
     }
   ]
 }

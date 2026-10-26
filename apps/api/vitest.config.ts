@@ -5,6 +5,6 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['test/**/*.test.ts', 'src/**/*.test.ts'],
-    exclude: ['test/integration/**', '**/node_modules/**'],
+    exclude: ['test/integration/**', 'test/pgtemp/**', '**/node_modules/**'],
   },
 });

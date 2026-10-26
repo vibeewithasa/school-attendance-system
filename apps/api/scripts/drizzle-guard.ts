@@ -24,7 +24,7 @@ export interface JournalEntry {
 
 const DESTRUCTIVE = [
   /\bDROP\s+(TABLE|SCHEMA|DATABASE|COLUMN|CONSTRAINT|INDEX|TRIGGER|FUNCTION|TYPE|ROLE|EXTENSION)\b/i,
-  /\bTRUNCATE\b/i,
+  /(^|\bBEGIN\b|\bTHEN\b|\bELSE\b)\s*TRUNCATE\b/i,
   /\bDELETE\s+FROM\b/i,
   /\bALTER\s+TABLE\b[^;]*\bALTER\s+COLUMN\b[^;]*\bTYPE\b/i,
   /\bRENAME\s+(TO|COLUMN)\b/i,

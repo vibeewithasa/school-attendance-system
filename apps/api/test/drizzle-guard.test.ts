@@ -31,6 +31,16 @@ CREATE TRIGGER t BEFORE UPDATE ON groups FOR EACH ROW EXECUTE FUNCTION f();`;
     expect(destructiveStatements(sql)).toEqual([]);
   });
 
+  it('TRUNCATE como evento de trigger no es una operacion destructiva, pero la sentencia si', () => {
+    expect(
+      destructiveStatements(
+        'CREATE TRIGGER t BEFORE TRUNCATE ON audit_events FOR EACH STATEMENT EXECUTE FUNCTION f();',
+      ),
+    ).toEqual([]);
+    expect(destructiveStatements('TRUNCATE "groups";').length).toBeGreaterThan(0);
+    expect(destructiveStatements('BEGIN TRUNCATE x; END').length).toBeGreaterThan(0);
+  });
+
   it('ignora comentarios y respeta la marca manual explicita', () => {
     expect(destructiveStatements('-- DROP TABLE x\nSELECT 1;')).toEqual([]);
     expect(destructiveStatements(`${ALLOW_DESTRUCTIVE_MARKER}\nDROP TABLE x;`)).toEqual([]);

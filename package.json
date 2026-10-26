@@ -18,6 +18,7 @@
     "db:check": "pnpm --filter @eta15/api db:check",
     "db:migrate": "pnpm --filter @eta15/api db:migrate",
     "test:integration": "pnpm --filter @eta15/api test:integration",
+    "test:pg-temp": "pnpm --filter @eta15/api test:pg-temp",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

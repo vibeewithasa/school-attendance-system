@@ -8,11 +8,11 @@ import {
   smallint,
   text,
   time,
-  timestamp,
   unique,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+import { id, timestamps } from './_columns.js';
 
 /**
  * Catalogo escolar. Ver docs/architecture/modelo-catalogo-escolar.md.
@@ -22,16 +22,6 @@ import {
  * - created_at / updated_at en timestamptz; updated_at lo mantiene un trigger (migracion 0001).
  * - Sin borrado fisico: se desactiva con is_active; las FK son ON DELETE RESTRICT.
  */
-
-const id = () =>
-  uuid('id')
-    .primaryKey()
-    .default(sql`uuidv7()`);
-
-const timestamps = {
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-};
 
 export const schoolYears = pgTable(
   'school_years',
