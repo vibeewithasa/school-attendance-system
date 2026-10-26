@@ -32,6 +32,11 @@ export interface AuthMeResponse {
   roles: string[];
   permissions: Array<{ permission: string; scope: 'all' | 'assigned_groups' | 'own' }>;
   session: { expiresAt: string; idleExpiresAt: string; mfaVerified: boolean };
+  /**
+   * required: algun rol vigente exige MFA; enforced: el servidor lo impone (false = diferido por decision del MVP, solo
+   * desarrollo local); verified: la sesion tiene segundo factor verificado (nunca se simula).
+   */
+  mfa: { required: boolean; enforced: boolean; verified: boolean };
 }
 
 /** GET /auth/csrf (200): valor para la cabecera X-CSRF-Token en peticiones que cambian estado. */

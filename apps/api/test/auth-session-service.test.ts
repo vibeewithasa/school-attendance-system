@@ -225,6 +225,97 @@ describe('MFA obligatorio (sin sesiones parciales)', () => {
     }
   });
 });
+describe('MFA diferido (decision del MVP, solo desarrollo local)', () => {
+  const deferred = () =>
+    createSessionService({
+      store: pgliteStore(db, 'api_runtime'),
+      clock: () => clock,
+      mfaEnforcement: 'deferred',
+    });
+  const auditFor = async (subject: string) =>
+    (
+      await db.query<{
+        session_id: string;
+        actor: string;
+        details: Record<string, unknown>;
+        dump: string;
+      }>(
+        `select session_id, actor_user_id as actor, details, a::text as dump from audit_events a
+          where event_type = 'auth.session_without_mfa' and subject_user_id = $1`,
+        [subject],
+      )
+    ).rows;
+
+  it('direccion y admin_tecnico entran con contrasena: sesion valida, MFA sin verificar y alta auditada', async () => {
+    clock = new Date();
+    const s = deferred();
+    for (const [id, domain, role] of [
+      [boss, 'school', 'direccion'],
+      [tech, 'technical', 'admin_tecnico'],
+    ] as const) {
+      const r = await s.create({ userId: id, ip: '127.0.0.1', userAgent: 'prueba' });
+      expect(r.ok).toBe(true);
+      if (!r.ok) continue;
+      expect(r.mfaDeferred).toBe(true);
+      expect(r.session.mfaVerifiedAt).toBeNull(); // nunca se simula un segundo factor
+      const v = await s.verify(r.token);
+      expect(v.ok).toBe(true);
+      if (!v.ok) continue;
+      expect(v.roles).toEqual([role]);
+      expect(v.user.accountDomain).toBe(domain);
+      expect(v.mfa).toEqual({ required: true, enforced: false, verified: false });
+      const audit = (await auditFor(id)).find((a) => a.session_id === r.session.id)!;
+      expect(audit.actor).toBe(id);
+      expect(audit.details).toEqual({ roles: [role], enforcement: 'deferred' });
+      expect(audit.dump).not.toContain(r.token); // sin secretos en la auditoria
+    }
+  });
+
+  it('un rol sin MFA obligatorio no genera auditoria ni cambia su comportamiento', async () => {
+    const id = await staff('prefectura');
+    const r = await deferred().create({ userId: id });
+    expect(r.ok && r.mfaDeferred).toBe(false);
+    expect(await auditFor(id)).toEqual([]);
+    if (r.ok) {
+      const v = await deferred().verify(r.token);
+      expect(v.ok && v.mfa).toEqual({ required: false, enforced: false, verified: false });
+    }
+  });
+
+  it('con segundo factor verificado (futuro) no se audita como excepcion y queda marcado como verificado', async () => {
+    const before = (await auditFor(boss)).length;
+    const r = await deferred().create({ userId: boss, mfaVerified: true });
+    expect(r.ok && r.mfaDeferred).toBe(false);
+    expect((await auditFor(boss)).length).toBe(before);
+    if (r.ok) {
+      const v = await deferred().verify(r.token);
+      expect(v.ok && v.mfa.verified).toBe(true);
+    }
+  });
+
+  it('volver a MFA obligatorio invalida de inmediato las sesiones abiertas sin segundo factor', async () => {
+    clock = new Date();
+    const r = await deferred().create({ userId: boss });
+    if (!r.ok) throw new Error('no se creo');
+    expect((await deferred().verify(r.token)).ok).toBe(true);
+    expect(await svc.verify(r.token)).toEqual({ ok: false, reason: 'mfa_required' }); // servicio con politica required
+    expect(await svc.create({ userId: boss })).toEqual({ ok: false, reason: 'mfa_required' });
+  });
+
+  it('el diferimiento no relaja el resto de comprobaciones (cuenta, roles, revocacion, caducidad)', async () => {
+    clock = new Date();
+    const s = deferred();
+    const r = await s.create({ userId: tech });
+    if (!r.ok) throw new Error('no se creo');
+    clock = new Date(clock.getTime() + 16 * MIN); // admin_tecnico: 15 min de inactividad
+    expect(await s.verify(r.token)).toEqual({ ok: false, reason: 'idle_expired' });
+    clock = new Date();
+    const r2 = await s.create({ userId: tech });
+    if (!r2.ok) throw new Error('no se creo');
+    expect(await s.revokeByToken(r2.token)).toBe(true);
+    expect(await s.verify(r2.token)).toEqual({ ok: false, reason: 'revoked' });
+  });
+});
 describe('verificar sesiones', () => {
   it('token valido: devuelve cuenta, roles y permisos vigentes (scope incluido)', async () => {
     clock = new Date();

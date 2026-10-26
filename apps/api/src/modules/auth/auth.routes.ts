@@ -220,6 +220,7 @@ export function authRoutes(app: FastifyInstance, options: AuthRoutesOptions): vo
           idleExpiresAt: a.session.idleExpiresAt.toISOString(),
           mfaVerified: a.session.mfaVerifiedAt !== null,
         },
+        mfa: a.mfa,
       };
       return body;
     },

@@ -80,7 +80,24 @@ export interface CreateSessionInput {
 }
 
 export type CreateSessionResult =
-  { ok: true; token: string; session: SessionSummary } | { ok: false; reason: CreateFailure };
+  | {
+      ok: true;
+      token: string;
+      session: SessionSummary;
+      /** `true` si algun rol exige MFA y la sesion se abrio SIN segundo factor por la politica `deferred` (queda auditado). */
+      mfaDeferred: boolean;
+    }
+  | { ok: false; reason: CreateFailure };
+
+/** Estado de MFA de una sesion verificada, para que el cliente y los guardas futuros decidan sin adivinar. */
+export interface MfaState {
+  /** Algun rol vigente del usuario exige MFA. */
+  required: boolean;
+  /** `true` si el servidor lo impone (`required`); `false` si esta diferido por decision del MVP. */
+  enforced: boolean;
+  /** La sesion tiene segundo factor verificado. Con MFA diferido nunca se simula: queda en `false`. */
+  verified: boolean;
+}
 
 export interface VerifiedSession {
   session: SessionSummary;
@@ -88,6 +105,7 @@ export interface VerifiedSession {
   roles: string[];
   grants: Grant[];
   policy: RoleSessionSettings;
+  mfa: MfaState;
 }
 
 export type VerifySessionResult =
@@ -101,6 +119,12 @@ export interface SessionServiceOptions {
   touchIntervalMs?: number;
   /** Generador del token (solo pruebas); por defecto `crypto.randomBytes`. */
   randomBytes?: (n: number) => Buffer;
+  /**
+   * Politica de MFA (ver AUTH_MFA_ENFORCEMENT en config/env.ts). `required` es el valor seguro por defecto: un rol con
+   * `requires_mfa` no obtiene sesion ni autoriza sin `mfa_verified_at`. `deferred` (solo desarrollo local, decision del
+   * MVP) permite la sesion con contrasena, NO marca nunca el segundo factor como verificado y audita cada alta.
+   */
+  mfaEnforcement?: 'required' | 'deferred';
 }
 
 export const TOKEN_BYTES = 32;
@@ -185,6 +209,7 @@ export function createSessionService(options: SessionServiceOptions) {
   const { store } = options;
   const touchIntervalMs = options.touchIntervalMs ?? DEFAULT_TOUCH_INTERVAL_MS;
   const random = options.randomBytes ?? ((n: number) => randomBytes(n));
+  const mfaDeferredAllowed = options.mfaEnforcement === 'deferred';
 
   async function createWithin(
     tx: SqlClient,
@@ -208,10 +233,10 @@ export function createSessionService(options: SessionServiceOptions) {
 
     const roles = (await loadRoles(tx, user.id)).rows;
     if (roles.length === 0) return { ok: false, reason: 'no_active_roles' };
-    // Ningun camino produce una sesion completa para un rol que exige MFA sin que el segundo factor este verificado.
-    if (roles.some((r) => r.requires_mfa) && !input.mfaVerified) {
-      return { ok: false, reason: 'mfa_required' };
-    }
+    // Con `required`, ningun camino produce una sesion para un rol que exige MFA sin segundo factor verificado.
+    const mfaRoles = roles.filter((r) => r.requires_mfa).map((r) => r.key);
+    const mfaDeferred = mfaRoles.length > 0 && !input.mfaVerified;
+    if (mfaDeferred && !mfaDeferredAllowed) return { ok: false, reason: 'mfa_required' };
     const { expiresAt, idleExpiresAt } = newSessionTimes(now, toSettings(roles));
 
     const inserted = await tx.query<SessionRow>(
@@ -231,7 +256,22 @@ export function createSessionService(options: SessionServiceOptions) {
         userAgent,
       ],
     );
-    return { ok: true, token, session: summary(inserted.rows[0]!) };
+    const created = inserted.rows[0]!;
+    if (mfaDeferred) {
+      // Trazabilidad de la excepcion del MVP: cada sesion de un rol con MFA obligatorio abierta sin segundo factor.
+      await tx.query(
+        `INSERT INTO audit_events (event_type, outcome, actor_user_id, subject_user_id, session_id, ip, user_agent, details)
+         VALUES ('auth.session_without_mfa', 'success', $1, $1, $2, $3::inet, $4, $5::jsonb)`,
+        [
+          user.id,
+          created.id,
+          input.ip ?? null,
+          userAgent,
+          JSON.stringify({ roles: mfaRoles, enforcement: 'deferred' }),
+        ],
+      );
+    }
+    return { ok: true, token, session: summary(created), mfaDeferred };
   }
 
   return {
@@ -285,7 +325,8 @@ export function createSessionService(options: SessionServiceOptions) {
         const roles = (await loadRoles(tx, user.id)).rows;
         if (roles.length === 0) return { ok: false, reason: 'no_active_roles' };
         // Una sesion sin segundo factor verificado nunca autoriza si algun rol vigente lo exige (sin sesiones parciales).
-        if (roles.some((r) => r.requires_mfa) && !row.mfa_verified_at) {
+        const mfaRequired = roles.some((r) => r.requires_mfa);
+        if (mfaRequired && !row.mfa_verified_at && !mfaDeferredAllowed) {
           return { ok: false, reason: 'mfa_required' };
         }
         const policy = toSettings(roles);
@@ -347,6 +388,11 @@ export function createSessionService(options: SessionServiceOptions) {
           roles: roles.map((r) => r.key),
           grants: grantRows.rows.map((g) => ({ permission: g.permission, scope: g.scope })),
           policy,
+          mfa: {
+            required: mfaRequired,
+            enforced: !mfaDeferredAllowed,
+            verified: current.mfa_verified_at !== null,
+          },
         };
       });
     },

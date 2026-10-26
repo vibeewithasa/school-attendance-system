@@ -73,7 +73,18 @@ export async function registerAuth(
 ): Promise<{ sessions: SessionService }> {
   const limits = { ...DEFAULT_AUTH_LIMITS, ...options.limits };
   const passwords = options.passwords ?? createPasswordService();
-  const sessions = createSessionService({ store: options.store, clock: options.clock });
+  const sessions = createSessionService({
+    store: options.store,
+    clock: options.clock,
+    mfaEnforcement: env.AUTH_MFA_ENFORCEMENT,
+  });
+  if (env.AUTH_MFA_ENFORCEMENT === 'deferred') {
+    // Aviso visible en cada arranque: es una excepcion de desarrollo local, no una configuracion de despliegue.
+    app.log.warn(
+      { mfa: 'deferred' },
+      'MFA DIFERIDO (AUTH_MFA_ENFORCEMENT=deferred): direccion y admin_tecnico entran solo con contrasena. Solo desarrollo local; no usar con datos reales.',
+    );
+  }
   const auth = createAuthService({
     store: options.store,
     sessions,

@@ -60,6 +60,7 @@ export function defineAuthHttpSuite(
     let harness: Harness;
     let teardown: () => Promise<void>;
     let boss: string;
+    let techBoss: string; // primer titular tecnico (bootstrap por acta)
     let seq = 0;
     let clockNow = new Date();
     const clock = () => clockNow;
@@ -90,9 +91,16 @@ export function defineAuthHttpSuite(
       nodeEnv: 'test' | 'production',
       limits: Partial<AuthLimits> = {},
       stream = true,
+      mfa: 'required' | 'deferred' = 'required',
     ) =>
       buildApp(
-        loadEnv({ NODE_ENV: nodeEnv, CORS_ORIGIN: ORIGIN, LOG_LEVEL: 'info', HOST: '127.0.0.1' }),
+        loadEnv({
+          NODE_ENV: nodeEnv,
+          CORS_ORIGIN: ORIGIN,
+          LOG_LEVEL: 'info',
+          HOST: '127.0.0.1',
+          AUTH_MFA_ENFORCEMENT: mfa,
+        }),
         {
           auth: { store: harness.store, passwords, clock, limits: { ...GENEROUS, ...limits } },
           ...(stream ? { logStream } : {}),
@@ -129,10 +137,15 @@ export function defineAuthHttpSuite(
       );
       const id = r.rows[0]!.id as string;
       if (opts.role !== null) {
+        // Las concesiones las hace un titular activo del mismo dominio (nunca la propia cuenta ni la API).
         await harness.owner(
           `insert into user_roles (user_id, role_id, domain, granted_by, grant_source)
            select $1, r.id, r.domain, $3, 'grant' from roles r where r.key = $2`,
-          [id, opts.role ?? 'prefectura', boss],
+          [
+            id,
+            opts.role ?? 'prefectura',
+            (opts.domain ?? 'school') === 'technical' ? techBoss : boss,
+          ],
         );
       }
       if (finalStatus === 'disabled')
@@ -210,6 +223,17 @@ export function defineAuthHttpSuite(
          select $1, r.id, r.domain, null, 'bootstrap', 'ACTA-PRUEBA-001' from roles r where r.key='direccion'`,
         [boss],
       );
+      const tb = await harness.owner(
+        `insert into users (email, display_name, account_domain, status, password_hash)
+         values ('tecnico-titular@escuela.mx','Titular tecnico','technical','active',$1) returning id`,
+        [await seedHasher.hash('titular-tecnico-ficticio-0')],
+      );
+      techBoss = tb.rows[0]!.id as string;
+      await harness.owner(
+        `insert into user_roles (user_id, role_id, domain, granted_by, grant_source, grant_reference)
+         select $1, r.id, r.domain, null, 'bootstrap', 'ACTA-PRUEBA-TEC-001' from roles r where r.key='admin_tecnico'`,
+        [techBoss],
+      );
       app = await build('test');
       prodApp = await build('production');
     }, 240_000);
@@ -278,26 +302,7 @@ export function defineAuthHttpSuite(
       });
 
       it('7. MFA obligatorio no disponible: 403 explicito, ninguna sesion ni cookie, sin re-hash', async () => {
-        const dir = await seedUser({ role: null });
-        // direccion e admin_tecnico se conceden por acta (solo el propietario)
-        await harness
-          .owner(
-            `insert into user_roles (user_id, role_id, domain, granted_by, grant_source)
-           select $1, r.id, r.domain, $2, 'grant' from roles r where r.key = 'direccion'`,
-            [dir.id, boss],
-          )
-          .catch(() => undefined); // si el trigger exige permiso, el propietario lo concede con acta
-        await harness.owner(`select 1`);
-        const has = await harness.owner(`select count(*)::int n from user_roles where user_id=$1`, [
-          dir.id,
-        ]);
-        if (Number(has.rows[0]!.n) === 0) {
-          await harness.owner(
-            `insert into user_roles (user_id, role_id, domain, granted_by, grant_source, grant_reference)
-             select $1, r.id, r.domain, null, 'recovery', 'ACTA-PRUEBA-REC' from roles r where r.key = 'direccion'`,
-            [dir.id],
-          );
-        }
+        const dir = await seedUser({ role: 'direccion' });
         const hashBefore = (
           await harness.owner(`select password_hash h from users where id=$1`, [dir.id])
         ).rows[0]!.h;
@@ -912,6 +917,223 @@ export function defineAuthHttpSuite(
       });
     });
 
+    // ------------------------------------------------------------------ MFA diferido (politica MVP local)
+    describe('MFA diferido (AUTH_MFA_ENFORCEMENT=deferred, solo desarrollo local)', () => {
+      let dapp: FastifyInstance;
+      const permissionsOf = async (domain: string) =>
+        new Set(
+          (await harness.owner(`select key from permissions where domain = $1`, [domain])).rows.map(
+            (r) => r.key as string,
+          ),
+        );
+      const meJson = async (cookie: string) =>
+        (await me(cookie, dapp)).json() as {
+          roles: string[];
+          permissions: Array<{ permission: string; scope: string }>;
+          session: { mfaVerified: boolean };
+          user: { accountDomain: string };
+          mfa: { required: boolean; enforced: boolean; verified: boolean };
+        };
+      const audits = async (userId: string) =>
+        Number(
+          (
+            await harness.owner(
+              `select count(*)::int n from audit_events where event_type = 'auth.session_without_mfa' and subject_user_id = $1`,
+              [userId],
+            )
+          ).rows[0]!.n,
+        );
+
+      beforeAll(async () => {
+        dapp = await build('test', {}, true, 'deferred');
+      });
+      afterAll(async () => {
+        await dapp?.close();
+      });
+
+      it('la politica esta fuera de produccion: la API no se construye en produccion con MFA diferido', async () => {
+        await expect(build('production', {}, true, 'deferred')).rejects.toThrow(
+          /NODE_ENV=production/,
+        );
+      });
+
+      it('1-3. prefectura, direccion y admin_tecnico entran con correo y contrasena; el estado de MFA es honesto', async () => {
+        const pref = await seedUser({ role: 'prefectura' });
+        const dir = await seedUser({ role: 'direccion' });
+        const adm = await seedUser({ role: 'admin_tecnico', domain: 'technical' });
+        const expected = [
+          [pref, 'prefectura', 'school', { required: false, enforced: false, verified: false }, 0],
+          [dir, 'direccion', 'school', { required: true, enforced: false, verified: false }, 1],
+          [
+            adm,
+            'admin_tecnico',
+            'technical',
+            { required: true, enforced: false, verified: false },
+            1,
+          ],
+        ] as const;
+        for (const [user, role, domain, mfa, auditCount] of expected) {
+          const res = await login(user.email, user.password, undefined, dapp);
+          expect(res.statusCode, role).toBe(200);
+          const c = res.cookies.find((x) => x.name === DEV_COOKIE_NAME)!;
+          secrets.add(c.value);
+          expect(c.httpOnly).toBe(true);
+          expect(c.sameSite).toBe('Strict');
+          expect(res.body).not.toContain(c.value);
+          const body = await meJson(`${DEV_COOKIE_NAME}=${c.value}`);
+          expect(body.roles).toEqual([role]);
+          expect(body.user.accountDomain).toBe(domain);
+          expect(body.mfa).toEqual(mfa); // nunca se simula un segundo factor verificado
+          expect(body.session.mfaVerified).toBe(false);
+          expect(await audits(user.id), `${role}: auditoria de la sesion sin MFA`).toBe(auditCount);
+        }
+      });
+
+      it('9. separacion school/technical: direccion no recibe permisos tecnicos y admin_tecnico no recibe permisos escolares', async () => {
+        const technical = await permissionsOf('technical');
+        const school = await permissionsOf('school');
+        const dir = await seedUser({ role: 'direccion' });
+        const adm = await seedUser({ role: 'admin_tecnico', domain: 'technical' });
+        const dirMe = await meJson((await session(dir, dapp)).cookie);
+        const admMe = await meJson((await session(adm, dapp)).cookie);
+        expect(dirMe.permissions.length).toBeGreaterThan(0);
+        expect(admMe.permissions.length).toBeGreaterThan(0);
+        expect(dirMe.permissions.some((p) => technical.has(p.permission))).toBe(false);
+        expect(admMe.permissions.some((p) => school.has(p.permission))).toBe(false);
+        // direccion SI tiene los permisos de autoridad escolares; la prefectura no
+        expect(
+          dirMe.permissions.some((p) => /^(users:manage|roles:grant)_school$/.test(p.permission)),
+        ).toBe(true);
+        const pref = await seedUser({ role: 'prefectura' });
+        const prefMe = await meJson((await session(pref, dapp)).cookie);
+        expect(prefMe.permissions.some((p) => /^(users:manage|roles:)/.test(p.permission))).toBe(
+          false,
+        );
+      });
+
+      it('10. no hay autoescalamiento: un rol no se obtiene por el login ni se puede cruzar de dominio en la base', async () => {
+        const pref = await seedUser({ role: 'prefectura' });
+        const attempt = await send(dapp, 'POST', '/auth/login', {
+          payload: {
+            email: pref.email,
+            password: pref.password,
+            roles: ['direccion'],
+            mfaVerified: true,
+          },
+        });
+        expect(attempt.statusCode).toBe(400);
+        const s = await session(pref, dapp);
+        expect((await meJson(s.cookie)).roles).toEqual(['prefectura']);
+        // un admin_tecnico (technical) no puede concederse a una cuenta escolar ni al reves (claves foraneas compuestas)
+        await expect(
+          harness.owner(
+            `insert into user_roles (user_id, role_id, domain, granted_by, grant_source, grant_reference)
+             select $1, r.id, r.domain, null, 'recovery', 'ACTA-PRUEBA-X' from roles r where r.key = 'admin_tecnico'`,
+            [pref.id],
+          ),
+        ).rejects.toThrow();
+      });
+
+      it('4-8, 11-12. el resto de controles siguen activos: credenciales, cuenta, revocacion, caducidad, CSRF, origen y limites', async () => {
+        const adm = await seedUser({ role: 'admin_tecnico', domain: 'technical' });
+        const off = await seedUser({ role: 'direccion', status: 'disabled' });
+        const locked = await seedUser({
+          role: 'direccion',
+          lockedUntil: new Date(Date.now() + 3_600_000),
+        });
+        const bad = [
+          await login(adm.email, 'incorrecta-ficticia', undefined, dapp),
+          await login(off.email, off.password, undefined, dapp),
+          await login(locked.email, locked.password, undefined, dapp),
+        ];
+        for (const r of bad) {
+          expect(noRequestId(r)).toEqual({
+            status: 401,
+            code: 'INVALID_CREDENTIALS',
+            message: 'Correo o contraseña incorrectos',
+          });
+          expect(r.cookies).toEqual([]);
+        }
+        // caducidad por inactividad de admin_tecnico: 15 min
+        clockNow = new Date();
+        const s = await session(adm, dapp);
+        clockNow = new Date(clockNow.getTime() + 16 * MIN);
+        expect((await me(s.cookie, dapp)).statusCode).toBe(401);
+        // revocacion
+        clockNow = new Date();
+        const s2 = await session(adm, dapp);
+        await harness.owner(
+          `update sessions set revoked_at = now(), revoked_reason = 'admin' where user_id = $1 and revoked_at is null`,
+          [adm.id],
+        );
+        expect((await me(s2.cookie, dapp)).statusCode).toBe(401);
+        // CSRF y origen
+        const s3 = await session(adm, dapp);
+        expect(
+          (await send(dapp, 'POST', '/auth/logout', { headers: { cookie: s3.cookie } })).statusCode,
+        ).toBe(403);
+        expect(
+          (
+            await send(dapp, 'POST', '/auth/login', {
+              origin: false,
+              headers: { origin: 'https://evil.example' },
+              payload: { email: adm.email, password: adm.password },
+            })
+          ).statusCode,
+        ).toBe(403);
+        const csrf = (
+          (await send(dapp, 'GET', '/auth/csrf', { headers: { cookie: s3.cookie } })).json() as {
+            csrfToken: string;
+          }
+        ).csrfToken;
+        expect(
+          (
+            await send(dapp, 'POST', '/auth/logout', {
+              headers: { cookie: s3.cookie, 'x-csrf-token': csrf },
+            })
+          ).statusCode,
+        ).toBe(204);
+        // limites de intentos (aplicados tambien a los roles privilegiados)
+        const limited = await build('test', { pairFailures: 2 }, true, 'deferred');
+        await login(adm.email, 'x-ficticia', '10.7.7.7', limited);
+        await login(adm.email, 'x-ficticia', '10.7.7.7', limited);
+        expect((await login(adm.email, adm.password, '10.7.7.7', limited)).statusCode).toBe(429);
+        await limited.close();
+      });
+
+      it('15. concurrencia de sesiones: 7 inicios de direccion dejan 5 vigentes y 7 altas auditadas', async () => {
+        const dir = await seedUser({ role: 'direccion' });
+        const s: Array<{ cookie: string }> = [];
+        for (let i = 0; i < 7; i++) s.push(await session(dir, dapp));
+        expect(await activeSessions(dir.id)).toBe(5);
+        expect(await audits(dir.id)).toBe(7);
+        expect((await me(s[0]!.cookie, dapp)).statusCode).toBe(401);
+        expect((await me(s[6]!.cookie, dapp)).statusCode).toBe(200);
+      });
+
+      it('la auditoria de la excepcion no contiene secretos y la API no puede alterarla', async () => {
+        const dir = await seedUser({ role: 'direccion' });
+        const s = await session(dir, dapp);
+        const rows = await harness.owner(
+          `select a::text as dump from audit_events a where subject_user_id = $1`,
+          [dir.id],
+        );
+        expect(rows.rows.length).toBeGreaterThan(0);
+        for (const r of rows.rows) {
+          expect(r.dump as string).not.toContain(s.token);
+          expect(r.dump as string).not.toContain(dir.password);
+          expect(r.dump as string).not.toContain('argon2');
+        }
+      });
+
+      it('con la politica required (por defecto) esos roles siguen sin poder entrar, aun con sesiones previas del modo diferido', async () => {
+        const dir = await seedUser({ role: 'direccion' });
+        const s = await session(dir, dapp);
+        expect((await me(s.cookie, dapp)).statusCode).toBe(200);
+        expect((await me(s.cookie, app)).statusCode).toBe(401); // misma base, servidor con MFA obligatorio
+        expect(noRequestId(await login(dir.email, dir.password)).code).toBe('MFA_REQUIRED');
+      });
+    });
     // ------------------------------------------------------------------ secretos
     describe('ausencia de secretos', () => {
       it('25. ninguna respuesta (cuerpo ni cabeceras salvo Set-Cookie) contiene contrasenas, tokens, hashes ni CSRF', () => {
