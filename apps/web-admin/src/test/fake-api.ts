@@ -51,7 +51,7 @@ export function installFakeApi(routes: Record<string, Handler>) {
       credentials: init?.credentials,
     };
     calls.push(call);
-    const path = url.replace(/^\/api/, '');
+    const path = url.replace(/^\/api/, '').split('?')[0];
     const handler = routes[`${method} ${path}`];
     if (!handler) return apiError(404, 'NOT_FOUND');
     return handler(call);
@@ -61,6 +61,23 @@ export function installFakeApi(routes: Record<string, Handler>) {
     calls,
     fetchMock,
     count: (key: string) =>
-      calls.filter((c) => `${c.method} ${c.url.replace(/^\/api/, '')}` === key).length,
+      calls.filter((c) => `${c.method} ${c.url.replace(/^\/api/, '').split('?')[0]}` === key)
+        .length,
   };
 }
+
+/** Respuesta de GET /auth/me con los permisos indicados (todos con alcance `all`). */
+export const meWith = (permissions: string[], over: Partial<typeof ME> & { id?: string } = {}) => ({
+  ...ME,
+  ...over,
+  user: { ...ME.user, id: over.id ?? ME.user.id, accountDomain: ME.user.accountDomain },
+  permissions: permissions.map((permission) => ({ permission, scope: 'all' })),
+});
+
+export const DIRECCION_PERMS = [
+  'users:read',
+  'roles:read',
+  'users:manage_school',
+  'roles:grant_school',
+  'roles:manage_school',
+];

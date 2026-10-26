@@ -1,7 +1,11 @@
 import { useState } from 'react';
-import { Link, Outlet } from 'react-router-dom';
+import { Link, NavLink, Outlet } from 'react-router-dom';
 import { Emblem } from '../components/Emblem';
 import { useAuth } from '../features/auth/AuthProvider';
+import { permissionsOf } from '../lib/permissions';
+
+const navClass = ({ isActive }: { isActive: boolean }) =>
+  `rounded-t-md px-3 py-2 text-sm font-semibold ${isActive ? 'bg-white text-tinto-700' : 'text-white hover:bg-tinto-800'}`;
 
 export function Layout() {
   const { state, logout } = useAuth();
@@ -45,6 +49,19 @@ export function Layout() {
             </button>
           )}
         </div>
+        {/* La navegacion solo muestra lo que la sesion puede usar; el servidor vuelve a autorizar cada llamada. */}
+        {me && (
+          <nav aria-label="Principal" className="mx-auto flex max-w-5xl gap-1 px-4">
+            <NavLink to="/" end className={navClass}>
+              Inicio
+            </NavLink>
+            {permissionsOf(me).canViewPersonnel && (
+              <NavLink to="/personal" className={navClass}>
+                Personal
+              </NavLink>
+            )}
+          </nav>
+        )}
       </header>
       {logoutError && (
         <p role="alert" className="bg-tinto-50 px-4 py-2 text-center text-sm text-tinto-900">

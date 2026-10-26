@@ -15,6 +15,8 @@ import { adminUsersRoutes } from '../admin-users/admin-users.routes.js';
 import { createAdminUsersService } from '../admin-users/admin-users.service.js';
 import { authRoutes } from './auth.routes.js';
 import { createAuthGuards } from './guards.js';
+import { activationAdminRoutes, activationPublicRoutes } from '../activation/activation.routes.js';
+import { createActivationService } from '../activation/activation.service.js';
 import { checkRequestOrigin, isUnsafeMethod, parseAllowedOrigins } from './csrf.js';
 import { createPasswordService, type PasswordService } from './password.js';
 import { createSessionService, type SessionService, type SessionStore } from './session-service.js';
@@ -39,6 +41,10 @@ export interface AuthLimits {
   /** Peticiones por minuto y por IP (inundacion) en login y en el resto de /auth. */
   floodLogin: number;
   floodOther: number;
+  /** Activacion: solicitudes por IP, por correo (desde cualquier IP) y finalizaciones fallidas por IP, por ventana. */
+  activationRequestIp: number;
+  activationRequestAccount: number;
+  activationCompleteFailures: number;
   now?: () => number;
 }
 
@@ -49,6 +55,9 @@ export const DEFAULT_AUTH_LIMITS: AuthLimits = {
   identityFailures: 30,
   floodLogin: 120,
   floodOther: 600,
+  activationRequestIp: 30,
+  activationRequestAccount: 5,
+  activationCompleteFailures: 10,
 };
 
 /** Seguridad HTTP comun: helmet, cookies y rechazo de peticiones que cambian estado desde origenes no permitidos. */
@@ -129,6 +138,34 @@ export async function registerAuth(
     async (scope) => {
       adminUsersRoutes(scope, {
         service: createAdminUsersService({ store: options.store }),
+        guards,
+        mfaDeferredAllowed:
+          env.AUTH_MFA_ENFORCEMENT === 'deferred' && env.NODE_ENV !== 'production',
+        floodLimit: limits.floodOther,
+      });
+    },
+    { prefix: '/admin' },
+  );
+  // Activacion de cuentas pendientes (reclamo en dos partes): rutas publicas del titular y rutas de la autoridad.
+  const activation = createActivationService({ store: options.store, passwords });
+  await app.register(
+    async (scope) => {
+      activationPublicRoutes(scope, {
+        service: activation,
+        limiters: {
+          requestIp: limiter(limits.activationRequestIp),
+          requestAccount: limiter(limits.activationRequestAccount),
+          completeFailIp: limiter(limits.activationCompleteFailures),
+        },
+        floodLimit: limits.floodOther,
+      });
+    },
+    { prefix: '/auth/activation' },
+  );
+  await app.register(
+    async (scope) => {
+      activationAdminRoutes(scope, {
+        service: activation,
         guards,
         mfaDeferredAllowed:
           env.AUTH_MFA_ENFORCEMENT === 'deferred' && env.NODE_ENV !== 'production',

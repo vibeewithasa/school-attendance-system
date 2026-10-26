@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ApiError, NetworkError } from '../../lib/api';
 import { useAuth } from './AuthProvider';
 
@@ -213,6 +213,14 @@ export function LoginPage() {
               {submitting ? 'Entrando…' : 'Iniciar sesión'}
             </button>
           </form>
+
+          <p className="mt-6 text-sm text-slate-700">
+            ¿Primera vez? Si una autoridad de la escuela ya registró tu cuenta,{' '}
+            <Link to="/activar" className="font-semibold text-tinto-700 underline">
+              actívala aquí
+            </Link>
+            .
+          </p>
 
           {state.status === 'unavailable' && (
             <p role="status" className="mt-4 text-sm text-slate-700">

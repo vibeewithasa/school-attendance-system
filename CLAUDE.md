@@ -27,7 +27,8 @@ Todo en Windows nativo: **no WSL, no Docker, no contenedores**.
 . .\tools\env.ps1      # primero, en cada sesión nueva
 pnpm install
 pnpm dev:api           # API en 127.0.0.1:3000
-pnpm dev:web           # web en 127.0.0.1:5173 (usar SIEMPRE esta direccion, no localhost)`npnpm dev:sandbox       # API + PostgreSQL desechable con cuentas FICTICIAS para probar el login (Ctrl+C lo destruye)`npnpm auth:bootstrap -- ...  # bootstrap de la primera autoridad (consola, persona presente; ver auth-rbac.md §5)
+pnpm dev:web           # web en 127.0.0.1:5173 (usar SIEMPRE esta direccion, no localhost)`npnpm dev:sandbox       # API + PostgreSQL desechable con cuentas FICTICIAS (login, panel /personal y /activar); Ctrl+C lo destruye`npnpm auth:bootstrap -- ...  # bootstrap de la primera autoridad (consola, persona presente; ver auth-rbac.md §5)
+pnpm auth:second-authority -- ...  # dispensa excepcional del control dual para la 2.ª autoridad (consola, con acta; ver auth-rbac.md §9.6)
 pnpm typecheck; pnpm lint; pnpm test; pnpm build
 ```
 

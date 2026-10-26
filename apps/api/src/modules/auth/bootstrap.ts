@@ -17,7 +17,7 @@
  *  - El dominio ESCOLAR esta BLOQUEADO hasta que exista un procedimiento verificable de la autoridad escolar inicial.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { normalizeEmail } from '@eta15/shared-contracts';
+import { PASSWORD_MIN_LENGTH, normalizeEmail, validateNewPassword } from '@eta15/shared-contracts';
 import type { PasswordService } from './password.js';
 
 export type BootstrapDomain = 'school' | 'technical';
@@ -43,7 +43,8 @@ export const BOOTSTRAP_PROCEDURES: Record<
   },
 };
 
-export const MIN_BOOTSTRAP_PASSWORD_LENGTH = 12;
+/** El bootstrap aplica la politica de contrasenas del proyecto (shared-contracts), con el correo y el nombre de la cuenta. */
+export const MIN_BOOTSTRAP_PASSWORD_LENGTH = PASSWORD_MIN_LENGTH;
 
 export type BootstrapErrorCode =
   | 'procedure_blocked'
@@ -140,10 +141,12 @@ export async function bootstrapFirstAuthority(
 
   // La persona titular teclea su propia contrasena (despues de las comprobaciones, para no pedirla en vano).
   const password = await deps.readPassword();
-  if (typeof password !== 'string' || password.length < MIN_BOOTSTRAP_PASSWORD_LENGTH)
+  const policy =
+    typeof password === 'string' ? validateNewPassword(password, { email, displayName }) : null;
+  if (!policy || !policy.ok)
     throw new BootstrapError(
       'password_rejected',
-      `La contrasena debe tener al menos ${MIN_BOOTSTRAP_PASSWORD_LENGTH} caracteres`,
+      `La contrasena no cumple la politica (${policy && !policy.ok ? policy.reasons.join(', ') : 'no es texto'})`,
     );
   let hash: string;
   try {

@@ -17,6 +17,7 @@
     "db:check": "tsx scripts/run-drizzle.ts check",
     "db:whoami": "tsx scripts/db-identity.ts",
     "auth:bootstrap": "tsx scripts/bootstrap-authority.ts",
+    "auth:second-authority": "tsx scripts/authorize-second-authority.ts",
     "dev:sandbox": "tsx scripts/dev-sandbox.ts",
     "db:studio": "drizzle-kit studio"
   },

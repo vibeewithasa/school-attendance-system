@@ -2,6 +2,7 @@
   "name": "@eta15/shared-contracts",
   "version": "0.0.0",
   "private": true,
+  "sideEffects": false,
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

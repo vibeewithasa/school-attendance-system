@@ -60,6 +60,25 @@ async function main(): Promise<void> {
     { rol: 'direccion', correo: 'direccion.ficticia@escuela.test', contrasena: direccionPw },
   );
 
+  // Control dual: quien crea una cuenta no aprueba su activacion, asi que el entorno trae DOS autoridades escolares ficticias
+  // (la segunda se prepara con una fixture aislada; en una instalacion real la incorpora el procedimiento excepcional con acta).
+  const direccion2Pw = newPassword();
+  const d2 = await cluster.owner.query<{ id: string }>(
+    `INSERT INTO users (email, display_name, account_domain, status, password_hash)
+     VALUES ('direccion.dos.ficticia@escuela.test', 'Dirección dos ficticia', 'school', 'active', $1) RETURNING id`,
+    [await passwords.hash(direccion2Pw)],
+  );
+  await cluster.owner.query(
+    `INSERT INTO user_roles (user_id, role_id, domain, granted_by, grant_source)
+     SELECT $1, r.id, r.domain, d.id, 'grant' FROM roles r, users d WHERE r.key = 'direccion' AND d.email = 'direccion.ficticia@escuela.test'`,
+    [d2.rows[0]!.id],
+  );
+  accounts.push({
+    rol: 'direccion (2.ª)',
+    correo: 'direccion.dos.ficticia@escuela.test',
+    contrasena: direccion2Pw,
+  });
+
   const prefPw = newPassword();
   const pref = await cluster.owner.query<{ id: string }>(
     `INSERT INTO users (email, display_name, account_domain, status, password_hash)
@@ -97,7 +116,13 @@ async function main(): Promise<void> {
     '\nEntorno listo. API: http://127.0.0.1:3000   (abre el portal con  pnpm dev:web  en http://127.0.0.1:5173)',
   );
   console.log('Cuentas FICTICIAS de este arranque (se destruyen al salir):\n');
-  console.table(accounts);
+  // Las contrasenas son ficticias y solo viven en este arranque; aun asi no se escriben en salidas redirigidas a archivos:
+  // solo se muestran en una terminal interactiva o si se pide expresamente con --show-credentials.
+  if (process.stdout.isTTY || process.argv.includes('--show-credentials')) console.table(accounts);
+  else
+    console.log(
+      '(credenciales omitidas: la salida no es una terminal; use --show-credentials para mostrarlas)',
+    );
   console.log('Pulsa Ctrl+C para detener y destruir el entorno.');
 
   let closing = false;

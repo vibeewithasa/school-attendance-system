@@ -94,28 +94,3 @@ export interface AdminRole {
   domain: 'school' | 'technical';
   requiresMfa: boolean;
 }
-
-/**
- * CONTRATOS PREPARADOS, SIN ENDPOINT TODAVIA (activacion y recuperacion por reclamo en dos partes; ver
- * docs/architecture/auth-rbac.md §6): la persona titular genera un secreto en SU dispositivo y registra solo su SHA-256;
- * una autoridad del dominio verifica su identidad en persona y autoriza la solicitud; la persona completa con el secreto y
- * elige su propia contrasena. No hay enlace que la administracion pueda usar en nombre de otra persona.
- */
-export const credentialRequestBodySchema = z
-  .object({
-    email: emailSchema,
-    purpose: z.enum(['invite', 'password_reset']),
-    /** SHA-256 del secreto generado por la persona, en base64url (43 caracteres). */
-    secretHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-  })
-  .strict();
-export const authorizeCredentialRequestBodySchema = z
-  .object({ verificationMethod: z.enum(['in_person_id', 'in_person_known']) })
-  .strict();
-export const completeCredentialRequestBodySchema = z
-  .object({
-    /** Secreto original (el titular lo conserva; la API solo recibe su hash al solicitar). */
-    secret: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-    newPassword: z.string().min(1).max(1024),
-  })
-  .strict();

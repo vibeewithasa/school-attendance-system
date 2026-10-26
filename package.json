@@ -18,6 +18,7 @@
     "db:check": "pnpm --filter @eta15/api db:check",
     "db:whoami": "pnpm --filter @eta15/api db:whoami",
     "auth:bootstrap": "pnpm --filter @eta15/api auth:bootstrap",
+    "auth:second-authority": "pnpm --filter @eta15/api auth:second-authority",
     "dev:sandbox": "pnpm --filter @eta15/api dev:sandbox",
     "db:migrate": "pnpm --filter @eta15/api db:migrate",
     "test:integration": "pnpm --filter @eta15/api test:integration",

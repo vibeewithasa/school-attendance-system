@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startApiCluster, type ApiCluster } from '../helpers/api-cluster.js';
+import { defineActivationTests } from '../helpers/activation-suite.js';
 import { defineAdminHttpSuite, type AdminKit } from '../helpers/admin-http-suite.js';
 import { createPgSessionStore } from '../../src/modules/auth/session-store-pg.js';
 
@@ -31,6 +32,8 @@ defineAdminHttpSuite(
   {
     // Estas pruebas son destructivas para el estado de titulares: se ejecutan al FINAL de la suite.
     extra: (kit: AdminKit) => {
+      // Primero la activacion (no destructiva para los titulares); despues la concurrencia que si lo es.
+      defineActivationTests(kit);
       describe('concurrencia real de la administracion', () => {
         const holders = async (domain: string) =>
           Number(

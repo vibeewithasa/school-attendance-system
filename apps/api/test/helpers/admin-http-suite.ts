@@ -19,6 +19,9 @@ const GENEROUS: Partial<AuthLimits> = {
   identityFailures: 10_000,
   floodLogin: 100_000,
   floodOther: 100_000,
+  activationRequestIp: 100_000,
+  activationRequestAccount: 100_000,
+  activationCompleteFailures: 100_000,
 };
 const PARAMS = { memoryKiB: 20 * 1024, passes: 2, parallelism: 1, tagLength: 32 };
 
@@ -45,6 +48,9 @@ export interface AdminKit {
   ) => Promise<Res>;
   boss: Account;
   techBoss: Account;
+  /** Lineas de log de TODAS las apps construidas por la suite y valores secretos ficticios generados (para buscar fugas). */
+  logs: string[];
+  secrets: Set<string>;
 }
 
 interface Seed {
@@ -745,6 +751,8 @@ export function defineAdminHttpSuite(
       get techBoss() {
         return techBoss;
       },
+      logs,
+      secrets,
     });
   });
 }
