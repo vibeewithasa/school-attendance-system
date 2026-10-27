@@ -3,7 +3,17 @@ import tseslint from 'typescript-eslint';
 import globals from 'globals';
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/node_modules/**', '**/coverage/**', 'apps/api/drizzle/**'] },
+  {
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/coverage/**',
+      'apps/api/drizzle/**',
+      // Salidas generadas por Gradle (informes HTML/JS de pruebas, cachés); el código Android no es JS/TS.
+      'apps/android-prefectura/**/build/**',
+      'apps/android-prefectura/.gradle/**',
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Idioma de la interfaz: espanol (es-MX). Los datos de la etapa 1 son SINTETICOS. -->
+<resources>
+    <string name="app_name">ETA 15 · Prefectura</string>
+
+    <!-- Comunes -->
+    <string name="action_back">Volver</string>
+    <string name="action_cancel">Cancelar</string>
+    <string name="error_local_detail">No se pudo leer la información guardada en este dispositivo. Cierra y vuelve a abrir la aplicación.</string>
+    <string name="group_not_found">No se encontró el grupo</string>
+    <string name="weekend_notice">Hoy no es día de clases (sábado o domingo): no se abren listas nuevas. Las capturas anteriores siguen guardadas.</string>
+    <plurals name="students_count">
+        <item quantity="one">%d alumno</item>
+        <item quantity="other">%d alumnos</item>
+    </plurals>
+
+    <!-- Modo demostracion -->
+    <string name="demo_banner_title">MODO DEMOSTRACIÓN</string>
+    <string name="demo_banner_detail">Datos totalmente ficticios. Nada proviene de la escuela ni se envía a ella.</string>
+
+    <!-- Captura local -->
+    <string name="badge_saved_locally">GUARDADA EN ESTE DISPOSITIVO</string>
+
+    <!-- Inicio -->
+    <string name="home_title">Asistencia diaria</string>
+    <string name="home_subtitle">Prefectura · Escuela Secundaria Técnica No. 15</string>
+    <string name="home_profile">Perfil: %1$s</string>
+    <string name="home_no_session">Esta versión no incluye inicio de sesión escolar. No hay grupos ni alumnos disponibles.</string>
+    <string name="home_date_demo">Fecha de demostración (reloj del dispositivo, zona de Mazatlán): %1$s</string>
+    <string name="home_date_device">Fecha del dispositivo (no es una fecha escolar oficial): %1$s</string>
+    <string name="home_local_notice">La captura se guarda solo en este dispositivo. No hay inicio de sesión escolar ni envío al servidor: nada de lo que captures aquí es un registro oficial de asistencia.</string>
+    <string name="home_button_groups">Mis grupos</string>
+    <string name="home_button_connectivity">Conectividad y sincronización</string>
+
+    <!-- Grupos -->
+    <string name="groups_title">Mis grupos</string>
+    <string name="groups_error">No se pudieron cargar los grupos</string>
+    <string name="groups_empty_title">Sin grupos</string>
+    <string name="groups_empty_detail">No hay grupos guardados en este dispositivo.</string>
+    <string name="group_no_draft">Sin lista hoy</string>
+    <string name="group_progress">Hoy: %1$d de %2$d marcados</string>
+
+    <!-- Padron -->
+    <string name="roster_title">Grupo</string>
+    <string name="roster_error">No se pudo cargar el grupo</string>
+    <string name="roster_empty">Este grupo no tiene alumnos guardados en el dispositivo.</string>
+    <string name="roster_capture_button">Pasar lista de hoy</string>
+
+    <!-- Captura -->
+    <string name="capture_title">Pasar lista</string>
+    <string name="capture_date_label">Fecha de demostración: %1$s</string>
+    <string name="capture_progress">%1$d de %2$d marcados</string>
+    <string name="capture_counts">Presentes: %1$d · Ausentes: %2$d · Pendientes: %3$d</string>
+    <string name="capture_local_notice">Borrador local: no equivale a finalizar la lista de la escuela y todavía no se envía.</string>
+    <string name="capture_clear">Quitar marca</string>
+    <string name="capture_summary_button">Ver resumen del borrador</string>
+    <string name="capture_error">No se pudo abrir la lista</string>
+    <string name="capture_empty_roster">El grupo no tiene alumnos</string>
+    <string name="capture_empty_roster_detail">No se puede abrir una lista sin alumnos.</string>
+    <string name="capture_not_school_day">No se abren listas hoy</string>
+    <string name="capture_msg_not_editable">Este borrador es de otro día y ya no se puede modificar.</string>
+    <string name="capture_msg_not_found">No se encontró al alumno o al borrador.</string>
+    <string name="capture_msg_save_failed">No se pudo guardar el cambio en este dispositivo.</string>
+    <string name="mark_present">Presente</string>
+    <string name="mark_absent">Ausente</string>
+    <string name="mark_pending">Pendiente</string>
+
+    <!-- Resumen -->
+    <string name="summary_title">Resumen del borrador</string>
+    <string name="summary_present">Presentes: %1$d</string>
+    <string name="summary_absent">Ausentes: %1$d</string>
+    <string name="summary_pending">Pendientes: %1$d</string>
+    <string name="summary_complete_local">Todos los alumnos tienen marca en el borrador local. Sigue guardado solo en este dispositivo.</string>
+    <string name="summary_incomplete_local">Faltan alumnos por marcar. Puedes seguir capturando; todo se guarda en este dispositivo.</string>
+    <string name="summary_not_server">Este resumen es de un borrador local. NO equivale a finalizar la lista de asistencia de la escuela y todavía no existe envío al servidor.</string>
+    <string name="summary_pending_list">Alumnos pendientes</string>
+    <string name="summary_continue">Seguir capturando</string>
+    <string name="summary_error">No se pudo leer el resumen</string>
+    <string name="summary_no_draft">Todavía no hay borrador de hoy</string>
+    <string name="summary_no_draft_detail">Abre la lista del grupo para comenzar.</string>
+
+    <!-- Conectividad -->
+    <string name="connectivity_title">Conectividad y sincronización</string>
+    <string name="sync_status_title">Estado de sincronización</string>
+    <string name="sync_status_value">Sincronización no implementada</string>
+    <string name="sync_status_detail">Esta versión no envía nada a la escuela, aunque haya internet. Las capturas permanecen en este dispositivo hasta que existan inicio de sesión escolar y un protocolo de envío.</string>
+    <string name="network_title">Conexión del dispositivo</string>
+    <string name="network_online">Con red</string>
+    <string name="network_offline">Sin red</string>
+    <string name="network_note">Es solo informativo: pasar lista funciona igual con o sin red.</string>
+    <string name="connectivity_local_guarantee">Tus marcas se guardan en este dispositivo y siguen ahí al cerrar y volver a abrir la aplicación.</string>
+    <string name="dev_title">Servidor de desarrollo (solo debug)</string>
+    <string name="dev_note">Comprobación opcional de /health en el equipo anfitrión del emulador. No usa credenciales, no envía datos y no es una sesión.</string>
+    <string name="dev_check">Comprobar /health</string>
+    <string name="dev_checking">Comprobando…</string>
+    <string name="dev_result_ok">El servidor de desarrollo responde (solo comprobación de salud; no hay sincronización).</string>
+    <string name="dev_result_down">El servidor de desarrollo no está disponible. La captura local sigue funcionando.</string>
+    <string name="dev_result_status">El servidor respondió con el código %1$d.</string>
+    <string name="dev_result_na">Comprobación no disponible en esta versión.</string>
+    <string name="reset_title">Datos de demostración</string>
+    <string name="reset_detail">Borra todo lo guardado en este dispositivo (grupos, alumnos y capturas ficticias) y vuelve a cargar la demostración.</string>
+    <string name="reset_button">Restablecer demostración</string>
+    <string name="reset_confirm_title">¿Restablecer la demostración?</string>
+    <string name="reset_confirm_text">Se borrarán las capturas locales de demostración y se crearán datos ficticios nuevos.</string>
+    <string name="reset_confirm_yes">Restablecer</string>
+</resources>

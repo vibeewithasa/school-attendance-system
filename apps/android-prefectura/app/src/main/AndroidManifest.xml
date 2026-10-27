@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Solo lectura del estado de red (indicador de conectividad). Etapa 1: la app de RELEASE no declara INTERNET ni envia nada. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
+        Seguridad de datos locales:
+        - allowBackup=false y reglas explicitas: nada de la app viaja a copias de seguridad en la nube ni a transferencias
+          entre dispositivos (los datos de prefectura, aun sinteticos, no deben salir del equipo).
+        - usesCleartextTraffic=false: HTTPS obligatorio; el trafico HTTP solo se permite en debug hacia 10.0.2.2 (ver src/debug).
+    -->
+    <application
+        android:name=".EtaApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Eta15"
+        android:usesCleartextTraffic="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

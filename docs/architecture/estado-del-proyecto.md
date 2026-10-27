@@ -9,7 +9,7 @@
 | `apps/web-admin`            | Inicializado       | React 19 + Vite + Tailwind 4, routing, `ErrorBoundary`, pantalla inicial. Sin pruebas              |
 | `packages/shared-contracts` | Inicializado       | Tipos `HealthResponse` y `ApiErrorBody`                                                            |
 | `packages/ui`               | Reservado          | Vacío                                                                                              |
-| `apps/android-prefectura`   | Sin implementación | Solo carpeta (`.gitkeep`)                                                                          |
+| `apps/android-prefectura`   | Etapa 1 (rama)     | App local con datos ficticios (Compose + Room), sin login ni sincronización; ver sección Android   |
 | `apps/access-pwa`           | Sin implementación | Solo carpeta (`.gitkeep`)                                                                          |
 | Módulos escolares           | En curso           | Catálogo, alumnos, prefectura (aplicados, sin datos); asistencia aplicada (0010 y 0005), sin datos |
 | PostgreSQL local            | Operativo          | Base `eta15_dev`, rol `eta15_app` (sin privilegios administrativos). Ver ADR 0003                  |
@@ -92,7 +92,11 @@ Implementada y validada en entornos aislados; **migración 0010 y privilegios 00
 - **Privilegios 0005** (propuesta + `apply` con preflight + `verify`): 8 `GRANT` por columna; el historial solo admite `SELECT` e `INSERT`; la hora la fijan triggers o `DEFAULT`. Aplicados con `pnpm db:apply-privileges 0005-attendance-write` (ensayo con ROLLBACK y luego `--execute`; verificador en la misma transacción).
 - **Interfaz** `/asistencia`: grupos del día, captura Presente/Ausente, pendientes, guardar borrador, finalizar con confirmación, aviso de conflicto con recarga que respeta lo que marcó otra persona; accesible y probada a 375 px.
 - **Pruebas** (2026-10-27): 967 unitarias (815 API + 152 React), 41 de integración con la base real (solo lectura; verificadas antes y después de aplicar 0010/0005), 443 en clúster PostgreSQL desechable (concurrencia real, privilegios reales de `eta15_api`, 0010 aplicada incrementalmente sobre 0000–0009 con datos previos) y una pasada en navegador real contra `pnpm dev:sandbox -- --catalog-write --students-write --prefect-write --attendance-write --seed-attendance` (dos prefectas con cobertura compartida; conflicto de versión, recarga, finalización, acceso a un grupo ajeno, sábado y vista móvil).
-- **Fuera de alcance**: Android, sincronización offline, justificantes, retardos de puerta, MFA, reportes y alertas.
+- **Fuera de alcance**: sincronización offline, justificantes, retardos de puerta, MFA, reportes y alertas (la app Android de la etapa 1 es solo captura local con datos ficticios).
+
+## App Android de prefectura (rama `feat/android-attendance`, etapa 1)
+
+Primera app nativa **funcional con datos 100 % sintéticos** (Kotlin, Jetpack Compose, Room, Material 3), compilada, instalada y probada en el emulador `Medium_Phone_API_36.1`. Solo debug incluye el modo demostración; **no hay inicio de sesión escolar, ni descarga de grupos reales, ni envío o sincronización de asistencia**, y lo capturado es un borrador local que se rotula **GUARDADA EN ESTE DISPOSITIVO** (nunca "enviada" ni "registrada"). Room no cifra: ningún dato real hasta definir la protección en reposo y la autenticación móvil. No se tocó PostgreSQL ni se aplicó ninguna migración. Detalle: [android-prefectura.md](android-prefectura.md); propuesta por etapas: [propuesta-android-asistencia.md](propuesta-android-asistencia.md); autenticación móvil (propuesta): [ADR 0005](../decisions/0005-android-autenticacion-movil.md).
 
 ## Limitaciones conocidas
 

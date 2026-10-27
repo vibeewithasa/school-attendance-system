@@ -5,3 +5,4 @@ pnpm-lock.yaml
 apps/api/drizzle
 *.ps1
 *.sql
+apps/android-prefectura/app/schemas
