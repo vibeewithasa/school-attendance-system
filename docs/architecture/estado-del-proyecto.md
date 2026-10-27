@@ -2,18 +2,18 @@
 
 Última actualización: 2026-10-26.
 
-| Componente                  | Estado             | Detalle                                                                                       |
-| --------------------------- | ------------------ | --------------------------------------------------------------------------------------------- |
-| `apps/api`                  | Inicializado       | Fastify 5, config con Zod, errores centralizados, logs JSON, `GET /health`, 4 pruebas         |
-| Drizzle / base de datos     | Preparado          | `drizzle.config.ts`, `src/db/client.ts` y esquema vacío. Sin tablas, sin migraciones          |
-| `apps/web-admin`            | Inicializado       | React 19 + Vite + Tailwind 4, routing, `ErrorBoundary`, pantalla inicial. Sin pruebas         |
-| `packages/shared-contracts` | Inicializado       | Tipos `HealthResponse` y `ApiErrorBody`                                                       |
-| `packages/ui`               | Reservado          | Vacío                                                                                         |
-| `apps/android-prefectura`   | Sin implementación | Solo carpeta (`.gitkeep`)                                                                     |
-| `apps/access-pwa`           | Sin implementación | Solo carpeta (`.gitkeep`)                                                                     |
-| Módulos escolares           | En curso           | Catálogo, alumnos, prefectura (aplicados, sin datos); asistencia preparada (0010 sin aplicar) |
-| PostgreSQL local            | Operativo          | Base `eta15_dev`, rol `eta15_app` (sin privilegios administrativos). Ver ADR 0003             |
-| Emblema institucional       | Pendiente          | No está en el repositorio; `Emblem.tsx` es un marcador                                        |
+| Componente                  | Estado             | Detalle                                                                                            |
+| --------------------------- | ------------------ | -------------------------------------------------------------------------------------------------- |
+| `apps/api`                  | Inicializado       | Fastify 5, config con Zod, errores centralizados, logs JSON, `GET /health`, 4 pruebas              |
+| Drizzle / base de datos     | Preparado          | `drizzle.config.ts`, `src/db/client.ts` y esquema vacío. Sin tablas, sin migraciones               |
+| `apps/web-admin`            | Inicializado       | React 19 + Vite + Tailwind 4, routing, `ErrorBoundary`, pantalla inicial. Sin pruebas              |
+| `packages/shared-contracts` | Inicializado       | Tipos `HealthResponse` y `ApiErrorBody`                                                            |
+| `packages/ui`               | Reservado          | Vacío                                                                                              |
+| `apps/android-prefectura`   | Sin implementación | Solo carpeta (`.gitkeep`)                                                                          |
+| `apps/access-pwa`           | Sin implementación | Solo carpeta (`.gitkeep`)                                                                          |
+| Módulos escolares           | En curso           | Catálogo, alumnos, prefectura (aplicados, sin datos); asistencia aplicada (0010 y 0005), sin datos |
+| PostgreSQL local            | Operativo          | Base `eta15_dev`, rol `eta15_app` (sin privilegios administrativos). Ver ADR 0003                  |
+| Emblema institucional       | Pendiente          | No está en el repositorio; `Emblem.tsx` es un marcador                                             |
 
 ## Sprint 1 (en curso)
 
@@ -83,15 +83,15 @@ Esquema y permisos mínimos **APLICADOS en `eta15_dev` el 2026-10-27**, **sin ni
 
 ## Asistencia diaria (rama `feat/daily-attendance`)
 
-Implementada y validada en entornos aislados; **migración 0010 y privilegios 0005 PREPARADOS y SIN APLICAR en `eta15_dev`** (que sigue con 10 migraciones, 14 tablas, 29 permisos, 37 asignaciones, 13 eventos de auditoría y **0 datos**). Detalle, reglas, decisiones provisionales y futuras en [diseno-asistencia-diaria.md](diseno-asistencia-diaria.md).
+Implementada y validada en entornos aislados; **migración 0010 y privilegios 0005 APLICADOS en `eta15_dev` el 2026-10-27, sin ningún dato** (11 migraciones, 17 tablas, 29 permisos, 36 asignaciones de permisos, 14 eventos de auditoría, 0 cuentas, alumnos, ciclos, grupos y listas). Respaldo previo verificado en `C:\Users\asahe\Backups\ETA15\eta15_dev_pre-0010-0005_20261027-135633.dump` (fuera del repositorio). Detalle, reglas, decisiones provisionales y futuras en [diseno-asistencia-diaria.md](diseno-asistencia-diaria.md).
 
 - **Requisitos de la escuela**: una lista por grupo y fecha escolar (no por materia), de lunes a viernes y a cualquier hora, `America/Mazatlan`, varias personas con acceso al mismo grupo, la asistencia sobrevive a los cambios de grupo; justificantes y puerta son otros módulos.
 - **Modelo** (migración **0010**): `attendance_days` (`UNIQUE (group_id, attendance_date)`, CHECK lunes a viernes, borrador/finalizada con `revision`), `attendance_records` (padrón **congelado** al abrir, FK compuestas a la matrícula del mismo ciclo y a la asignación de grupo histórica) y `attendance_events` (historial solo-agregar). Triggers de integridad (fecha no futura, grupo activo, ciclo, padrón vigente, finalización sin pendientes, inmutabilidad); sin `DELETE` ni cascadas; las fechas del ciclo no pueden dejar listas fuera.
 - **RBAC** (misma migración): se **retira `attendance:read` con alcance `all` a `trabajo_social`** (brecha de la semilla 0004; 1 evento de auditoría; 36 asignaciones de permisos al aplicarla). `attendance:correct` queda reservado **sin operación** (decisión institucional pendiente).
 - **API** `/school/attendance/*` (`today`, abrir o recuperar la lista, listar, detalle, guardar borrador, finalizar, historial): fecha decidida por el servidor, 404 indistinguible fuera de alcance, CSRF/Origin, control optimista por `revision`, guardados idempotentes por `requestId`, acceso revalidado **con bloqueo** en cada escritura, auditoría con IDs.
-- **Privilegios 0005** (propuesta + `apply` con preflight + `verify`): 8 `GRANT` por columna; el historial solo admite `SELECT` e `INSERT`; la hora la fijan triggers o `DEFAULT`. Se aplicarán con `pnpm db:apply-privileges 0005-attendance-write` solo con autorización.
+- **Privilegios 0005** (propuesta + `apply` con preflight + `verify`): 8 `GRANT` por columna; el historial solo admite `SELECT` e `INSERT`; la hora la fijan triggers o `DEFAULT`. Aplicados con `pnpm db:apply-privileges 0005-attendance-write` (ensayo con ROLLBACK y luego `--execute`; verificador en la misma transacción).
 - **Interfaz** `/asistencia`: grupos del día, captura Presente/Ausente, pendientes, guardar borrador, finalizar con confirmación, aviso de conflicto con recarga que respeta lo que marcó otra persona; accesible y probada a 375 px.
-- **Pruebas** (2026-10-27): 966 unitarias (814 API + 152 React), 41 de integración con la base real (solo lectura; reconocen el estado "sin 0010"), 442 en clúster PostgreSQL desechable (concurrencia real, privilegios reales de `eta15_api`, 0010 aplicada incrementalmente sobre 0000–0009 con datos previos) y una pasada en navegador real contra `pnpm dev:sandbox -- --catalog-write --students-write --prefect-write --attendance-write --seed-attendance` (dos prefectas con cobertura compartida; conflicto de versión, recarga, finalización, acceso a un grupo ajeno, sábado y vista móvil).
+- **Pruebas** (2026-10-27): 967 unitarias (815 API + 152 React), 41 de integración con la base real (solo lectura; verificadas antes y después de aplicar 0010/0005), 443 en clúster PostgreSQL desechable (concurrencia real, privilegios reales de `eta15_api`, 0010 aplicada incrementalmente sobre 0000–0009 con datos previos) y una pasada en navegador real contra `pnpm dev:sandbox -- --catalog-write --students-write --prefect-write --attendance-write --seed-attendance` (dos prefectas con cobertura compartida; conflicto de versión, recarga, finalización, acceso a un grupo ajeno, sábado y vista móvil).
 - **Fuera de alcance**: Android, sincronización offline, justificantes, retardos de puerta, MFA, reportes y alertas.
 
 ## Limitaciones conocidas

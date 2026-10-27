@@ -1,6 +1,6 @@
 # Asistencia diaria (una lista por grupo y fecha)
 
-Estado: **implementada y validada en entornos aislados** (rama `feat/daily-attendance`; migración **0010** y propuesta de privilegios **0005** **preparadas y SIN APLICAR en `eta15_dev`**, que sigue con 10 migraciones y 0 datos). Las
+Estado: **implementada, validada en entornos aislados y con esquema y privilegios mínimos APLICADOS en `eta15_dev` el 2026-10-27** (migración **0010** y privilegios **0005**; 11 migraciones, 17 tablas, **0 datos**, sin cuentas ni alumnos). Las
 reglas de la sección 1 las definió la escuela. Lo demás son **decisiones técnicas provisionales del MVP** (sección 2) o **decisiones futuras** (sección 3) y **no están ratificadas por la institución**. No hay Android, sincronización offline,
 justificantes ni retardos de puerta en esta fase.
 
@@ -203,12 +203,27 @@ Resumen de resultados en [estado-del-proyecto.md](estado-del-proyecto.md). Cober
 Entorno aislado y desechable (no toca `eta15_dev`): `pnpm dev:sandbox -- --catalog-write --students-write --prefect-write --attendance-write --seed-attendance --show-credentials` (opcionalmente `--school-today=AAAA-MM-DD` fija el "hoy" escolar,
 p. ej. un sábado) y `pnpm dev:web` en `http://127.0.0.1:5173`. Siembra un ciclo ficticio, dos grupos y dos prefectas (una con la cobertura compartida del grupo A). Ctrl+C lo destruye.
 
-## 15. Aplicación futura en `eta15_dev` (NO ejecutada; requiere autorización explícita)
+## 15. Aplicación en `eta15_dev` (EJECUTADA el 2026-10-27, con autorización explícita; procedimiento reutilizable)
 
 1. Preflight de solo lectura (`pnpm db:state`) y respaldo `pg_dump -Fc` verificado fuera del repositorio.
 2. `pnpm db:migrate` (solo 0010; confirmada en Git).
 3. Ensayo con `ROLLBACK` y luego `--execute` de `pnpm db:apply-privileges 0005-attendance-write --sha256=<hash del .apply.sql>`.
 4. Verificar como `eta15_api` dentro de `BEGIN … ROLLBACK` y con `pnpm db:state`. Las pruebas de integración de solo lectura (`attendance.integration.test.ts`) aceptan ambos estados (antes y después).
+
+**Resultado de la aplicación (2026-10-27, commit `a9ffab0`)**
+
+- Preflight: `pnpm db:whoami` y `pnpm db:state` coincidieron con lo esperado (10 migraciones, 14 tablas, 29 permisos, 37 asignaciones, 13 eventos, 0 datos; solo 0010 pendiente). Respaldo `pg_dump -Fc` en `C:\Users\asahe\Backups\ETA15\eta15_dev_pre-0010-0005_20261027-135633.dump` (fuera del repositorio; `pg_restore --list` correcto, 14 tablas) con resumen no sensible.
+- `pnpm db:migrate` (solo 0010): 11 migraciones, 17 tablas, 29 permisos, **36** asignaciones, **14** eventos de auditoría, 0 filas en las tablas de asistencia; `trabajo_social` conserva solo `justifications:read|manage`. Las funciones nuevas tienen `search_path` fijo y ninguna es ejecutable por `PUBLIC`.
+- `pnpm db:apply-privileges 0005-attendance-write --sha256=…`: ensayo con `ROLLBACK` y luego `--execute` (8 `GRANT`, verificador en la misma transacción).
+- Comprobación como `eta15_api` (dentro de `BEGIN … ROLLBACK`, sin datos): `SELECT`/`UPDATE` aprobados funcionan; columnas no aprobadas, `DELETE`, `TRUNCATE`, `UPDATE` de `attendance_events`, `CREATE`, `SET ROLE eta15_app` y cualquier escritura de `role_permissions` fallan con 42501.
+- Los flujos completos con datos ficticios siguen probándose solo en clústeres desechables y en `pnpm dev:sandbox`.
+
+**Procedimiento de respaldo**: `pg_dump -Fc` con `eta15_app` hacia `Backups\ETA15` con nombre nuevo (nunca se sobrescribe), código de salida 0, tamaño distinto de cero, `pg_restore --list`, SHA-256 y un `.summary.txt` con el `db:state` previo (sin secretos); la contraseña se toma de `apps/api/.env.migrator` solo en la variable de entorno del proceso y no se imprime.
+
+**Casos límite que quedan como decisiones pendientes antes de cualquier uso real** (conservados a propósito, con pruebas):
+
+1. _Cruzar la medianoche_: un borrador no se guarda ni finaliza al día siguiente (`DAY_NOT_CURRENT`), no se puede cambiar su fecha (trigger) ni forzar una fecha artificial (`DATE_NOT_TODAY`) ni duplicarlo (reabrir hoy devuelve la lista de hoy); Dirección sigue viéndolo y la pantalla explica que ya no puede modificarse desde ese flujo. Falta decidir cómo se cierra o corrige un borrador abandonado.
+2. _Padrón cambiado después de abrir_: el padrón está congelado; las altas o traslados posteriores se informan como `discrepancies` (aviso en pantalla) sin incorporar a nadie ni alterar marcas. **Finalizar con discrepancias está permitido** (decisión provisional): la lista finalizada conserva el padrón del momento de apertura y la discrepancia sigue visible. Falta decidir el mecanismo de reconciliación y quién lo autoriza.
 
 ## 16. Riesgos y limitaciones
 
