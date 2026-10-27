@@ -330,7 +330,7 @@ La excepción es **solo de desarrollo local con datos sintéticos**. Antes de us
 
 `✓` todos · `G` grupos asignados · `B` datos básicos · `—` ninguno · `(A)` autoridad.
 
-(¹) Desde la migración **0006** (preparada, no aplicada en `eta15_dev`) la administración del catálogo es el permiso escolar `catalog:manage_school`, solo de `direccion`; `admin_tecnico` pierde `catalog:manage` (que queda definido sin asignar) y `catalog:read` (el catálogo no necesita permisos técnicos); prefectura, trabajo social y control de acceso pierden `catalog:read` hasta que exista requerimiento (ver [modelo-catalogo-escolar.md](modelo-catalogo-escolar.md)). La tabla muestra el estado **posterior** a 0006.
+(¹) Desde la migración **0006** (aplicada en `eta15_dev` el 2026-10-26) la administración del catálogo es el permiso escolar `catalog:manage_school`, solo de `direccion`; `admin_tecnico` pierde `catalog:manage` (que queda definido sin asignar) y `catalog:read` (el catálogo no necesita permisos técnicos); prefectura, trabajo social y control de acceso pierden `catalog:read` hasta que exista requerimiento (ver [modelo-catalogo-escolar.md](modelo-catalogo-escolar.md)). La tabla muestra el estado vigente tras 0006.
 
 | Permiso                                                                           | prefectura | trabajo_social | control_acceso | direccion | admin_tecnico |
 | --------------------------------------------------------------------------------- | :--------: | :------------: | :------------: | :-------: | :-----------: |

@@ -16,6 +16,7 @@
     "db:migrate": "tsx scripts/run-drizzle.ts migrate",
     "db:check": "tsx scripts/run-drizzle.ts check",
     "db:whoami": "tsx scripts/db-identity.ts",
+    "db:apply-privileges": "tsx scripts/apply-privileges.ts",
     "auth:bootstrap": "tsx scripts/bootstrap-authority.ts",
     "auth:second-authority": "tsx scripts/authorize-second-authority.ts",
     "dev:sandbox": "tsx scripts/dev-sandbox.ts",

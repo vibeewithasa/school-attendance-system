@@ -59,7 +59,22 @@ BEGIN
     v_bad := v_bad || format(E'\n %s sobre %s no debe existir', r.priv, r.tabla);
   END LOOP;
   IF has_schema_privilege('eta15_api', 'public', 'CREATE') THEN v_bad := v_bad || E'\n CREATE en public'; END IF;
-  IF pg_has_role('eta15_api', 'eta15_app', 'MEMBER') THEN v_bad := v_bad || E'\n miembro de eta15_app'; END IF;
+  IF pg_has_role('eta15_api', 'eta15_app', 'MEMBER') OR pg_has_role('eta15_api', 'eta15_app', 'USAGE') THEN
+    v_bad := v_bad || E'\n miembro de eta15_app (SET ROLE posible)';
+  END IF;
+  -- GRANT OPTION y privilegios de PUBLIC (tabla o columna) sobre las tablas de interes: ninguno.
+  FOR r IN
+    SELECT c.relname AS tabla FROM pg_class c
+     WHERE c.relnamespace = 'public'::regnamespace
+       AND c.relname IN ('school_years', 'groups', 'role_permissions', 'permissions', 'roles')
+       AND (EXISTS (SELECT 1 FROM aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a
+                     WHERE a.grantee = 0 OR (a.grantee = 'eta15_api'::regrole AND a.is_grantable))
+            OR EXISTS (SELECT 1 FROM pg_attribute at, aclexplode(at.attacl) a
+                        WHERE at.attrelid = c.oid AND at.attacl IS NOT NULL
+                          AND (a.grantee = 0 OR (a.grantee = 'eta15_api'::regrole AND a.is_grantable))))
+  LOOP
+    v_bad := v_bad || format(E'\n PUBLIC o GRANT OPTION en %s', r.tabla);
+  END LOOP;
   IF v_bad <> '' THEN
     RAISE EXCEPTION 'Privilegios efectivos de eta15_api inesperados:%', v_bad;
   END IF;

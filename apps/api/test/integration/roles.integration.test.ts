@@ -153,7 +153,7 @@ describe('comprobaciones POSITIVAS como eta15_api', () => {
     const r = await api.query<{ roles: number; permisos: number }>(
       `select (select count(*)::int from roles) as roles, (select count(*)::int from permissions) as permisos`,
     );
-    expect(r.rows[0]).toEqual({ roles: 5, permisos: 26 });
+    expect(r.rows[0]).toEqual({ roles: 5, permisos: 27 }); // 26 de 0004 + catalog:manage_school (0006)
   });
   it('puede ejecutar los tres ayudantes autorizados', async () => {
     const r = await api.query<Record<string, unknown>>(
@@ -162,19 +162,22 @@ describe('comprobaciones POSITIVAS como eta15_api', () => {
     expect(r.rows[0]).toEqual({ dueno: false, autoridad: false, actor: null });
   });
   it('INSERT permitido (auditoria) y lectura de permisos por rol; todo revertido', async () => {
+    // 0006 dejo 6 eventos role.permissions_changed en eta15_dev: se compara contra esa linea base
+    const baseline = (await owner.query<{ n: number }>(`select count(*)::int n from audit_events`))
+      .rows[0]!.n;
     await rolledBack(api, async () => {
       await api.query(
         `insert into audit_events (event_type, outcome, details) values ('auth.prueba', 'success', '{"nota":"prueba de integracion"}')`,
       );
       const n = await api.query<{ n: number }>(`select count(*)::int n from audit_events`);
-      expect(n.rows[0]!.n).toBe(1);
+      expect(n.rows[0]!.n).toBe(baseline + 1);
       const grants = await api.query<{ n: number }>(
         `select count(*)::int n from user_roles ur join role_permissions rp on rp.role_id = ur.role_id`,
       );
       expect(grants.rows[0]!.n).toBe(0); // la consulta de permisos del servicio de sesiones es ejecutable
     });
     const after = await owner.query<{ n: number }>(`select count(*)::int n from audit_events`);
-    expect(after.rows[0]!.n).toBe(0); // nada persistio
+    expect(after.rows[0]!.n).toBe(baseline); // nada persistio
   });
   it('UPDATE sobre columnas autorizadas (users, user_roles, sessions, auth_tokens): permitido', async () => {
     await rolledBack(api, async () => {
@@ -283,6 +286,13 @@ describe('privilegios EFECTIVOS (catalogo, sin ejecutar DDL destructivo)', () =>
         p,
       ])
     ).rows[0]!.r;
+  const anyColumn = async (table: string, p: 'INSERT' | 'UPDATE') =>
+    (
+      await owner.query<{ r: boolean }>(
+        `select has_any_column_privilege('eta15_api', $1, $2) as r`,
+        [`public.${table}`, p],
+      )
+    ).rows[0]!.r;
   const colUpdate = async (table: string) =>
     (
       await owner.query<{ r: boolean }>(
@@ -301,16 +311,35 @@ describe('privilegios EFECTIVOS (catalogo, sin ejecutar DDL destructivo)', () =>
     sessions: [true, true, true, true],
     auth_tokens: [true, true, true, true],
     audit_events: [true, true, false, false],
-    school_years: [true, false, false, false],
-    groups: [true, false, false, false],
+    // escritura del catalogo: SOLO por columna (0002 aplicada el 2026-10-26; ver el test de columnas exactas)
+    school_years: [true, true, true, false],
+    groups: [true, true, true, false],
   };
   it('matriz exacta de SELECT/INSERT/UPDATE/DELETE por tabla', async () => {
     for (const [table, [s, i, u, d]] of Object.entries(matrix)) {
       expect(await priv(table, 'SELECT'), `${table} SELECT`).toBe(s);
-      expect(await priv(table, 'INSERT'), `${table} INSERT`).toBe(i);
+      expect(await anyColumn(table, 'INSERT'), `${table} INSERT(col)`).toBe(i);
       expect(await colUpdate(table), `${table} UPDATE(col)`).toBe(u);
       expect(await priv(table, 'DELETE'), `${table} DELETE`).toBe(d);
     }
+  });
+  it('catalogo: INSERT y UPDATE por las columnas aprobadas, sin privilegio de tabla ni GRANT OPTION (0002)', async () => {
+    for (const table of ['school_years', 'groups']) {
+      expect(await priv(table, 'INSERT'), `${table} INSERT de tabla`).toBe(false);
+      expect(await priv(table, 'UPDATE'), `${table} UPDATE de tabla`).toBe(false);
+    }
+    const r = await owner.query<{ t: string; p: string; cols: string }>(
+      `select table_name t, privilege_type p, string_agg(column_name, ',' order by column_name) cols
+         from information_schema.column_privileges
+        where grantee = 'eta15_api' and table_name in ('school_years','groups') and privilege_type in ('INSERT','UPDATE') and is_grantable = 'NO'
+        group by 1, 2 order by 1, 2`,
+    );
+    expect(r.rows).toEqual([
+      { t: 'groups', p: 'INSERT', cols: 'code,expected_entry_time,grade,school_year_id,shift' },
+      { t: 'groups', p: 'UPDATE', cols: 'code,expected_entry_time,is_active,shift' },
+      { t: 'school_years', p: 'INSERT', cols: 'ends_on,name,starts_on' },
+      { t: 'school_years', p: 'UPDATE', cols: 'ends_on,is_active,name,starts_on' },
+    ]);
   });
   it('nunca TRUNCATE, TRIGGER ni REFERENCES en ninguna tabla', async () => {
     for (const table of Object.keys(matrix)) {

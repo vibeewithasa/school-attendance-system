@@ -32,6 +32,7 @@ pnpm dev:sandbox       # API + PostgreSQL desechable con cuentas FICTICIAS (logi
 pnpm dev:sandbox -- --catalog-write   # además aplica la propuesta de privilegios 0002 (escritura del catálogo) SOLO en el clúster desechable
 pnpm auth:bootstrap -- ...  # bootstrap de la primera autoridad (consola, persona presente; ver auth-rbac.md §5)
 pnpm auth:second-authority -- ...  # dispensa excepcional del control dual para la 2.ª autoridad (consola, con acta; ver auth-rbac.md §9.6)
+pnpm db:apply-privileges <propuesta> --sha256=<hash> [--execute]  # aplica una propuesta de privilegios REVISADA (ensayo con ROLLBACK por defecto; ver tools/db/privileges)
 pnpm typecheck; pnpm lint; pnpm test; pnpm build
 ```
 
@@ -45,6 +46,7 @@ pnpm typecheck; pnpm lint; pnpm test; pnpm build
 - El rol de la aplicación es `eta15_api` (mínimo privilegio, no propietario) y su contraseña vive en `apps/api/.env`; las migraciones y la consola usan `eta15_app` desde `apps/api/.env.migrator`. La API se niega a arrancar con un rol propietario/privilegiado, y `pnpm db:migrate` verifica que el rol sea el propietario. `pnpm db:whoami` comprueba ambas identidades. Nunca conceder `TRIGGER`, `TRUNCATE`, `REFERENCES` ni `ALL` a `eta15_api`.
 - Autenticación HTTP (`/auth/login|logout|me|csrf`): cookie de sesión `HttpOnly` + `SameSite=Strict` (`__Host-` y `Secure` en producción); el token nunca va en JSON, URL ni logs; toda mutación exige `Origin` permitido y, autenticada, `X-CSRF-Token`; MFA/TOTP está pospuesto: por defecto `direccion`/`admin_tecnico` no obtienen sesión; solo con `AUTH_MFA_ENFORCEMENT=deferred` (desarrollo local con datos sintéticos; la API lo rechaza en producción o fuera de loopback) entran con contraseña, con alta auditada. Esa excepción no autoriza datos reales (`auth-rbac.md` §11.3). En desarrollo usar siempre `http://127.0.0.1:5173`. Ver `docs/architecture/auth-rbac.md` §9.3.
 - `eta15_api` es de solo lectura sobre `role_permissions` (`tools/db/privileges/0001-…`): nada de la API debe escribirlo sin una revisión de seguridad propia.
+- Escritura del catálogo (aplicada en `eta15_dev` el 2026-10-26): `eta15_api` tiene `INSERT`/`UPDATE` **solo por columna** en `school_years` y `groups` (`tools/db/privileges/0002-…`, verificable con `0002-school-catalog-write.verify.sql`); nunca `DELETE`, `TRUNCATE`, `TRIGGER` ni `REFERENCES`. Los privilegios se aplican con `pnpm db:apply-privileges` (preflight + `GRANT` + verificador en una transacción), no con SQL pegado a mano. El catálogo lo administra solo `direccion` (`catalog:manage_school`; política técnica pendiente de ratificación institucional).
 - Riesgo aceptado en desarrollo: `eta15_app` hereda `CONNECT`/`TEMPORARY` de `PUBLIC` sobre otras bases del servidor
   (ADR 0003). En producción el rol de ejecución de la API y el rol propietario de esquema/migraciones serán distintos.
 - Estado real del proyecto y módulos pendientes: `docs/architecture/estado-del-proyecto.md`. Decisiones: `docs/decisions/`.
