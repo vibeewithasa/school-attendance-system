@@ -149,7 +149,7 @@ export function createSchoolCatalogService(options: SchoolCatalogOptions) {
 
   /** Traduce errores de PostgreSQL a resultados de dominio sin exponer su texto. */
   function mapDbError(error: unknown): CatalogResult<never> {
-    const e = error as { code?: string; constraint?: string };
+    const e = error as { code?: string; constraint?: string; message?: string };
     switch (e.code) {
       case '23505':
         return fail(
@@ -163,6 +163,12 @@ export function createSchoolCatalogService(options: SchoolCatalogOptions) {
       case '23P01':
         return fail('CONFLICT', 'Las fechas se traslapan con otro ciclo escolar');
       case '23514':
+        if (e.constraint === 'school_years_enrollments_within')
+          return fail(
+            'CONFLICT',
+            'Hay matrículas o periodos de grupo fuera de las nuevas fechas del ciclo; las fechas no pueden dejar fuera el historial',
+          );
+        return fail('VALIDATION', 'Los datos no cumplen las reglas del catálogo');
       case '22007':
       case '22008':
       case '22P02':
@@ -170,6 +176,12 @@ export function createSchoolCatalogService(options: SchoolCatalogOptions) {
       case '23502':
         return fail('VALIDATION', 'Los datos no cumplen las reglas del catálogo');
       case '42501':
+        // Cambiar las fechas de un ciclo dispara un trigger (0007) que lee matriculas y periodos de grupo con los privilegios de la API.
+        if (/enrollments|student_group_assignments/.test(e.message ?? ''))
+          return fail(
+            'WRITE_UNAVAILABLE',
+            'La base de datos aún no habilita a la API el acceso a matrículas (propuesta de privilegios 0003): sin él no pueden cambiarse las fechas de un ciclo',
+          );
         return fail(
           'WRITE_UNAVAILABLE',
           'La base de datos aún no habilita la escritura del catálogo para la API (requiere aplicar la propuesta de privilegios 0002 con autorización)',

@@ -18,7 +18,11 @@ afterAll(async () => {
 function suite(label: string, privileges: 'full' | 'none') {
   let cluster: ApiCluster;
   beforeAll(async () => {
-    cluster = await startApiCluster(20, { catalogWrite: privileges === 'full' });
+    // Estado objetivo de eta15_dev: 0002 (catalogo) y 0003 (alumnos); cambiar fechas de un ciclo lee matriculas (trigger de 0007).
+    cluster = await startApiCluster(20, {
+      catalogWrite: privileges === 'full',
+      studentsWrite: privileges === 'full',
+    });
     clusters.push(cluster);
   }, 240_000);
   defineAdminHttpSuite(

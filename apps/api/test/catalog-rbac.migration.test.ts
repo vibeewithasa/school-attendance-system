@@ -30,7 +30,7 @@ const auditCount = async () =>
 
 beforeAll(async () => {
   db = new PGlite();
-  expect(migrations).toHaveLength(7);
+  expect(migrations.length).toBeGreaterThanOrEqual(7);
   for (const m of migrations.slice(0, 6)) for (const stmt of m.sql) await db.exec(stmt);
   before = await allAssignments();
   expect(before).toHaveLength(42);

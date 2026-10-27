@@ -50,6 +50,20 @@
       "when": 1793059526726,
       "tag": "0006_catalog_rbac_school_management",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793065744559,
+      "tag": "0007_students_enrollments",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793083004090,
+      "tag": "0008_students_rbac_policy",
+      "breakpoints": true
     }
   ]
 }

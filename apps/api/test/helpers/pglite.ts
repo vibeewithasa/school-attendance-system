@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import { btree_gist } from '@electric-sql/pglite/contrib/btree_gist';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
 
 /**
@@ -7,7 +8,8 @@ import { readMigrationFiles } from 'drizzle-orm/migrator';
  * aplicadas por el mismo lector que usa el migrador de Drizzle. Nunca toca eta15_dev.
  */
 export async function freshDb(): Promise<PGlite> {
-  const db = new PGlite();
+  // btree_gist: la migracion 0007 la instala (EXCLUDE que combina uuid y rangos de fechas).
+  const db = new PGlite({ extensions: { btree_gist } });
   const dir = join(import.meta.dirname, '..', '..', 'drizzle');
   for (const migration of readMigrationFiles({ migrationsFolder: dir })) {
     for (const stmt of migration.sql) await db.exec(stmt);

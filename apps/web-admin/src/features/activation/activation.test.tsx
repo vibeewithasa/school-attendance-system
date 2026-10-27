@@ -44,6 +44,12 @@ const requestBody = (api: ReturnType<typeof installFakeApi>) =>
     secretHash: string;
   };
 
+/** Una sola entrada de texto (pegado): evita cientos de renders por tecla en campos de contraseña largos. */
+const fill = async (el: HTMLElement, text: string) => {
+  await userEvent.click(el);
+  await userEvent.paste(text);
+};
+
 describe('pantalla de activacion', () => {
   it('paso 1: valida el correo antes de llamar a la API', async () => {
     const api = setup({});
@@ -122,22 +128,22 @@ describe('pantalla de activacion', () => {
       expect(submit.disabled).toBe(true);
       const pass = screen.getByLabelText('Contraseña nueva');
       const confirm = screen.getByLabelText('Confirma tu contraseña');
-      await userEvent.type(pass, 'corta');
+      await fill(pass, 'corta');
       expect(screen.getByText(/Usa al menos 12 caracteres/)).toBeTruthy();
       await userEvent.clear(pass);
-      await userEvent.type(pass, 'Password123456');
+      await fill(pass, 'Password123456');
       expect(screen.getByText(/demasiado común/)).toBeTruthy();
       await userEvent.clear(pass);
-      await userEvent.type(pass, 'analuisa-escuela-2026');
+      await fill(pass, 'analuisa-escuela-2026');
       expect(screen.getByText(/No uses tu correo ni tu nombre/)).toBeTruthy();
       await userEvent.clear(pass);
-      await userEvent.type(pass, GOOD);
+      await fill(pass, GOOD);
       expect(screen.queryByRole('list', { name: 'Requisitos de la contraseña' })).toBeNull();
-      await userEvent.type(confirm, 'otra cosa');
+      await fill(confirm, 'otra cosa');
       expect(screen.getByText('Las contraseñas no coinciden.')).toBeTruthy();
       expect(submit.disabled).toBe(true);
       await userEvent.clear(confirm);
-      await userEvent.type(confirm, GOOD);
+      await fill(confirm, GOOD);
       expect(submit.disabled).toBe(false);
       await userEvent.click(screen.getByLabelText('Mostrar la contraseña'));
       expect((pass as HTMLInputElement).type).toBe('text');

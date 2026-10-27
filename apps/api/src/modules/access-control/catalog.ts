@@ -262,8 +262,7 @@ export const ROLES: readonly RoleDef[] = [
     sessionAbsoluteMinutes: 720,
     maxConcurrentSessions: 5,
     grants: [
-      g('students:read_basic'),
-      g('students:read'),
+      // Sin students:* global (0008): alumnos cerrado por defecto hasta que la institucion defina sus funciones y datos.
       g('attendance:read'),
       g('justifications:read'),
       g('justifications:manage'),
@@ -278,7 +277,8 @@ export const ROLES: readonly RoleDef[] = [
     sessionIdleMinutes: 60,
     sessionAbsoluteMinutes: 720,
     maxConcurrentSessions: 5,
-    grants: [g('students:read_basic'), g('access:scan'), g('access:read')],
+    // Sin students:read_basic global (0008): se concedera con el control de acceso y datos MINIMOS.
+    grants: [g('access:scan'), g('access:read')],
   },
   {
     key: 'direccion',

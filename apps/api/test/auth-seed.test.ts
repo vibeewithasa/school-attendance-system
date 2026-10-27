@@ -110,7 +110,7 @@ describe('semilla en la base (0005) = catalogo en codigo', () => {
     );
     expect(r.rows[0]!.n).toBe(0);
   });
-  it('NO siembra usuarios, sesiones ni tokens; la unica auditoria es la de las altas/bajas de 0006', async () => {
+  it('NO siembra usuarios, sesiones ni tokens; la unica auditoria es la de las altas/bajas de 0006 y 0008', async () => {
     for (const t of ['users', 'user_roles', 'sessions', 'auth_tokens']) {
       const r = await db.query<{ n: number }>(`select count(*)::int n from ${t}`);
       expect(r.rows[0]!.n, t).toBe(0);
@@ -118,15 +118,16 @@ describe('semilla en la base (0005) = catalogo en codigo', () => {
     const audit = await db.query<{ event_type: string; actor_user_id: string | null }>(
       `select event_type, actor_user_id from audit_events`,
     );
-    // 0006 (politica del catalogo): 1 alta (direccion) + 5 bajas (2 de admin_tecnico y 3 roles escolares), sin actor (migracion)
-    expect(audit.rows).toHaveLength(6);
+    // 0006 (politica del catalogo): 1 alta (direccion) + 5 bajas (2 de admin_tecnico y 3 roles escolares); 0008 (alumnos): 3 bajas;
+    // todas sin actor (migracion)
+    expect(audit.rows).toHaveLength(9);
     expect(
       audit.rows.every(
         (x) => x.event_type === 'role.permissions_changed' && x.actor_user_id === null,
       ),
     ).toBe(true);
   });
-  it('la cadena de semilla (0004 + 0006) es idempotente: reaplicarla no cambia nada', async () => {
+  it('la cadena de semilla (0004 + 0006 + 0008) es idempotente: reaplicarla no cambia nada', async () => {
     const count = () =>
       db.query<{ n: number }>(
         `select (select count(*) from permissions)::int + (select count(*) from roles)::int + (select count(*) from role_permissions)::int n`,
@@ -135,6 +136,7 @@ describe('semilla en la base (0005) = catalogo en codigo', () => {
     for (const file of [
       '0004_auth_seed_roles_permissions.sql',
       '0006_catalog_rbac_school_management.sql',
+      '0008_students_rbac_policy.sql',
     ]) {
       const sql = readFileSync(join(import.meta.dirname, '..', 'drizzle', file), 'utf8');
       for (const stmt of sql.split('--> statement-breakpoint')) await db.exec(stmt);

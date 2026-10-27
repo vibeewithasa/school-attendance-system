@@ -1,4 +1,14 @@
 import type {
+  AssignGroupBody,
+  CreateStudentBody,
+  EnrollBody,
+  EnrollmentDto,
+  ListStudentsQuery,
+  StudentDto,
+  StudentList,
+  TransferBody,
+  UpdateStudentBody,
+  WithdrawBody,
   ActivationRequestList,
   ActivationStatusResponse,
   AdminRole,
@@ -177,6 +187,29 @@ export const api = {
   createGroup: (body: CreateGroupBody) => mutate<GroupDto>('/catalog/groups', 'POST', body),
   updateGroup: (id: string, body: UpdateGroupBody) =>
     mutate<GroupDto>(`/catalog/groups/${id}`, 'PATCH', body),
+
+  // --- Alumnos, matriculas e historial de grupo (datos de menores; el servidor autoriza cada llamada). Sin borrado. ---
+  listStudents: (q: Partial<ListStudentsQuery> = {}) =>
+    request<StudentList>(`/school/students${query({ ...q })}`),
+  getStudent: (id: string) => request<StudentDto>(`/school/students/${id}`),
+  createStudent: (body: Omit<CreateStudentBody, 'schoolCode'> & { schoolCode?: string | null }) =>
+    mutate<StudentDto>('/school/students', 'POST', body),
+  updateStudent: (id: string, body: UpdateStudentBody) =>
+    mutate<StudentDto>(`/school/students/${id}`, 'PATCH', body),
+  deactivateStudent: (id: string) =>
+    mutate<StudentDto>(`/school/students/${id}/deactivate`, 'POST'),
+  reactivateStudent: (id: string) =>
+    mutate<StudentDto>(`/school/students/${id}/reactivate`, 'POST'),
+  listEnrollments: (studentId: string) =>
+    request<EnrollmentDto[]>(`/school/students/${studentId}/enrollments`),
+  enrollStudent: (studentId: string, body: EnrollBody) =>
+    mutate<EnrollmentDto>(`/school/students/${studentId}/enrollments`, 'POST', body),
+  withdrawEnrollment: (id: string, body: WithdrawBody = {}) =>
+    mutate<EnrollmentDto>(`/school/enrollments/${id}/withdraw`, 'POST', body),
+  assignGroup: (enrollmentId: string, body: AssignGroupBody) =>
+    mutate<EnrollmentDto>(`/school/enrollments/${enrollmentId}/group-assignments`, 'POST', body),
+  transferGroup: (enrollmentId: string, body: TransferBody) =>
+    mutate<EnrollmentDto>(`/school/enrollments/${enrollmentId}/transfer`, 'POST', body),
 
   // --- Activacion por la persona titular (rutas publicas; el secreto nunca sale de esta pagina salvo al completar) ---
   activationRequest: (email: string, secretHash: string) =>

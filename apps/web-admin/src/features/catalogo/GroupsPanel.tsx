@@ -3,6 +3,7 @@ import type { GroupDto, GroupList, SchoolYearDto, Shift } from '@eta15/shared-co
 import { SHIFTS } from '@eta15/shared-contracts';
 import { ConfirmDialog } from '../../components/Modal';
 import { api } from '../../lib/api';
+import { searchTrimmed, useDebouncedSearch } from '../../lib/use-debounced-search';
 import { ErrorNotice } from '../personal/shared';
 import { GroupDialog } from './GroupDialog';
 import {
@@ -39,7 +40,6 @@ export function GroupsPanel({
   const [shift, setShift] = useState('');
   const [state, setState] = useState('');
   const [text, setText] = useState('');
-  const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [data, setData] = useState<GroupList | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -58,13 +58,7 @@ export function GroupsPanel({
     if (current) setYearId(current.id);
   }, [years, yearTouched]);
 
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setQ(text.trim());
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(t);
-  }, [text]);
+  const q = useDebouncedSearch(text, searchTrimmed, () => setPage(1));
 
   useEffect(() => {
     let cancelled = false;

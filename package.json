@@ -17,6 +17,7 @@
     "db:generate": "pnpm --filter @eta15/api db:generate",
     "db:check": "pnpm --filter @eta15/api db:check",
     "db:whoami": "pnpm --filter @eta15/api db:whoami",
+    "db:state": "pnpm --filter @eta15/api db:state",
     "db:apply-privileges": "pnpm --filter @eta15/api db:apply-privileges",
     "auth:bootstrap": "pnpm --filter @eta15/api auth:bootstrap",
     "auth:second-authority": "pnpm --filter @eta15/api auth:second-authority",

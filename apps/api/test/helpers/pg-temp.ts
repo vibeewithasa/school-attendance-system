@@ -117,9 +117,13 @@ export async function startTempPostgres(): Promise<TempPostgres> {
 }
 
 /** Aplica todas las migraciones de apps/api/drizzle con el mismo lector que usa el migrador de Drizzle. */
-export async function applyMigrations(client: pg.Client): Promise<void> {
+export async function applyMigrations(
+  client: pg.Client,
+  range: { from?: number; until?: number } = {},
+): Promise<void> {
   const dir = join(import.meta.dirname, '..', '..', 'drizzle');
-  for (const migration of readMigrationFiles({ migrationsFolder: dir })) {
+  const all = readMigrationFiles({ migrationsFolder: dir });
+  for (const migration of all.slice(range.from ?? 0, range.until ?? all.length)) {
     for (const stmt of migration.sql) await client.query(stmt);
   }
 }

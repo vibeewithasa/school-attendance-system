@@ -23,6 +23,9 @@ const DOMAINS: Domain[] = ['school', 'technical'];
 
 export function permissionsOf(me: AuthMeResponse) {
   const has = permissionSet(me);
+  /** Escritura: solo cuenta el permiso con alcance `all` (no existe "escribir solo mis grupos"). */
+  const hasAll = (permission: string) =>
+    me.permissions.some((p) => p.permission === permission && p.scope === 'all');
   const manageable = DOMAINS.filter((d) => has.has(`users:manage_${d}`));
   const grantable = DOMAINS.filter((d) => has.has(`roles:grant_${d}`));
   return {
@@ -34,6 +37,11 @@ export function permissionsOf(me: AuthMeResponse) {
     /** Catalogo escolar: leer o administrar ciclos y grupos (solo presentacion; el servidor autoriza). */
     canViewCatalog: has.has('catalog:read'),
     canManageCatalog: has.has('catalog:manage_school'),
+    /** Alumnos (solo presentacion; el servidor autoriza y aplica el alcance por grupo). */
+    canViewStudents: has.has('students:read_basic'),
+    canViewStudentFile: has.has('students:read'),
+    canManageStudents: hasAll('students:manage'),
+    canManageEnrollments: hasAll('enrollments:manage'),
     canCreate: (domain: Domain) => has.has(`users:manage_${domain}`),
     canGrant: (domain: Domain) => has.has(`roles:grant_${domain}`),
     canDisable: (domain: Domain) =>

@@ -136,7 +136,9 @@ Sin `DELETE` en ninguna ruta: se desactiva. Los errores no incluyen texto de Pos
 - Grupos de un ciclo (y por grado): prefijo de `groups_year_grade_code_shift_key`. No hay índice extra en `school_year_id`.
 - Tablas pequeñas (decenas de filas): no se añaden más índices; `updated_at` se indexará cuando exista el endpoint de sincronización con volumen que lo justifique.
 
-## Extensión futura (no implementado)
+## Extensión futura
+
+> Alumnos, matrículas e historial de grupo ya están diseñados e implementados en la rama `feat/students-enrollments` (**no aplicados en `eta15_dev`**): ver [modelo-alumnos-matriculas.md](modelo-alumnos-matriculas.md). Lo que sigue describe el diseño original y lo que continúa pendiente (prefectura y asistencia). Diferencias: la matrícula **no** lleva `group_id` (el grupo vive en `student_group_assignments`) y el `EXCLUDE` se hizo sobre el historial de grupo con `btree_gist`.
 
 | Entidad futura              | Relación y razón                                                                                                                                                                                                                                                                                                                                       |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

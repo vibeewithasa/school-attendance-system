@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useState } from 'react';
 import type { AdminUser, AdminUserList } from '@eta15/shared-contracts';
 import { api } from '../../lib/api';
+import { searchMinTwo, useDebouncedSearch } from '../../lib/use-debounced-search';
 import { DOMAIN_LABELS, roleLabel, type Domain } from '../../lib/permissions';
 import { ACTIVATION_LABELS, ErrorNotice, StatusBadge, adminErrorMessage } from './shared';
 
@@ -24,7 +25,6 @@ export function UsersPanel({
   const statusId = useId();
   const domainId = useId();
   const [text, setText] = useState('');
-  const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
   const [domain, setDomain] = useState('');
   const [page, setPage] = useState(1);
@@ -34,14 +34,7 @@ export function UsersPanel({
   const [attempt, setAttempt] = useState(0);
 
   // Busqueda con retraso: no se consulta en cada tecla y se exige un minimo de 2 caracteres (como el servidor).
-  useEffect(() => {
-    const t = setTimeout(() => {
-      const trimmed = text.trim();
-      setQ(trimmed.length >= 2 ? trimmed : '');
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(t);
-  }, [text]);
+  const q = useDebouncedSearch(text, searchMinTwo, () => setPage(1));
 
   useEffect(() => {
     let cancelled = false;

@@ -53,8 +53,8 @@ export interface ApplyProblems {
 export function checkApplyMatchesProposal(applySql: string, proposalSql: string): ApplyProblems {
   const problems: string[] = [];
   const proposalGrants = topLevelStatements(proposalSql);
-  if (proposalGrants.length !== 4 || !proposalGrants.every((s) => /^grant\s/i.test(s)))
-    problems.push('la propuesta debe contener exactamente 4 sentencias GRANT');
+  if (proposalGrants.length === 0 || !proposalGrants.every((s) => /^grant\s/i.test(s)))
+    problems.push('la propuesta debe contener unicamente sentencias GRANT');
   const statements = topLevelStatements(applySql);
   const grants = statements.filter((s) => !/^do\s+\$\$/i.test(s));
   const extra = grants.filter((s) => !/^grant\s/i.test(s));

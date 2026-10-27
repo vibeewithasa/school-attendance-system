@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import { btree_gist } from '@electric-sql/pglite/contrib/btree_gist';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { destructiveStatements } from '../scripts/drizzle-guard.js';
@@ -41,7 +42,7 @@ async function updatedAt(table: string, id: string) {
 }
 
 beforeAll(async () => {
-  db = new PGlite();
+  db = new PGlite({ extensions: { btree_gist } });
   const version = (
     await db.query<{ v: string }>(`select current_setting('server_version_num') as v`)
   ).rows[0]!.v;
@@ -68,6 +69,8 @@ describe('historial de migraciones de Drizzle', () => {
     '0004_auth_seed_roles_permissions',
     '0005_auth_integrity',
     '0006_catalog_rbac_school_management',
+    '0007_students_enrollments',
+    '0008_students_rbac_policy',
   ];
 
   it('el journal registra todas las migraciones en orden, con marcas de tiempo crecientes', () => {

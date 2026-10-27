@@ -17,6 +17,8 @@ import { authRoutes } from './auth.routes.js';
 import { createAuthGuards } from './guards.js';
 import { schoolCatalogRoutes } from '../school-catalog/school-catalog.routes.js';
 import { createSchoolCatalogService } from '../school-catalog/school-catalog.service.js';
+import { studentsRoutes } from '../students/students.routes.js';
+import { createStudentsService } from '../students/students.service.js';
 import { activationAdminRoutes, activationPublicRoutes } from '../activation/activation.routes.js';
 import { createActivationService } from '../activation/activation.service.js';
 import { checkRequestOrigin, isUnsafeMethod, parseAllowedOrigins } from './csrf.js';
@@ -188,6 +190,19 @@ export async function registerAuth(
       });
     },
     { prefix: '/catalog' },
+  );
+  // Alumnos, matriculas e historial de grupo (datos de menores): permisos students:* / enrollments:manage con alcance (ver students.service.ts).
+  await app.register(
+    async (scope) => {
+      studentsRoutes(scope, {
+        service: createStudentsService({ store: options.store }),
+        guards,
+        mfaDeferredAllowed:
+          env.AUTH_MFA_ENFORCEMENT === 'deferred' && env.NODE_ENV !== 'production',
+        floodLimit: limits.floodOther,
+      });
+    },
+    { prefix: '/school' },
   );
   return { sessions };
 }

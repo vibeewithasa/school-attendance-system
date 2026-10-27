@@ -22,7 +22,9 @@ async function main(): Promise<void> {
   // --catalog-write aplica la PROPUESTA de privilegios 0002 (escritura del catalogo) SOLO en este clúster desechable; en
   // eta15_dev no se aplica sin autorizacion. Sin la opcion, las escrituras del catalogo responden 503 como en eta15_dev.
   const catalogWrite = process.argv.includes('--catalog-write');
-  const cluster = await startApiCluster(10, { catalogWrite });
+  // --students-write aplica la propuesta 0003 (alumnos, matriculas, historial de grupo), tambien solo en este clúster.
+  const studentsWrite = process.argv.includes('--students-write');
+  const cluster = await startApiCluster(10, { catalogWrite, studentsWrite });
   // Aislamiento: el clúster desechable usa un puerto propio; jamas el del servicio de PostgreSQL de Windows (5432).
   if (cluster.pgt.port === 5432) {
     await cluster.stop();

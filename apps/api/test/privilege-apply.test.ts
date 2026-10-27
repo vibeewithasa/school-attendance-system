@@ -114,3 +114,28 @@ describe('archivo de ejecucion 0002', () => {
     expect(broken.calls).not.toContain('COMMIT');
   });
 });
+
+describe('archivo de ejecucion 0003 (alumnos)', () => {
+  const p3 = privilegeFile('0003-students-write.proposal.sql');
+  const a3 = privilegeFile('0003-students-write.apply.sql');
+
+  it('contiene un preflight y EXACTAMENTE los nueve GRANT por columna de la propuesta aprobada', () => {
+    const c = checkApplyMatchesProposal(a3, p3);
+    expect(c.problems).toEqual([]);
+    expect(c.grants).toHaveLength(9);
+    for (const g of c.grants) {
+      expect(g).toMatch(/^GRANT (SELECT|INSERT|UPDATE) \(/); // todo por columna, tambien SELECT
+      expect(g).toMatch(/ ON (students|enrollments|student_group_assignments) TO eta15_api$/);
+    }
+    expect(p3.split('\n')[0]).toBe(String.raw`\quit`);
+  });
+
+  it('rechaza cualquier GRANT adicional o ampliado', () => {
+    const bad = (extra: string) => checkApplyMatchesProposal(`${a3}\n${extra}`, p3).problems;
+    expect(bad('GRANT DELETE ON students TO eta15_api;')).not.toEqual([]);
+    expect(bad('GRANT SELECT ON students TO eta15_api;')).not.toEqual([]);
+    expect(bad('GRANT INSERT (id) ON students TO eta15_api;')).not.toEqual([]);
+    expect(bad('GRANT UPDATE (student_id) ON enrollments TO eta15_api;')).not.toEqual([]);
+    expect(bad('GRANT SELECT (id) ON students TO PUBLIC;')).not.toEqual([]);
+  });
+});

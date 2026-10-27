@@ -328,6 +328,8 @@ La excepción es **solo de desarrollo local con datos sintéticos**. Antes de us
 
 ## 12. Matriz de permisos
 
+> **Alumnos (módulo en desarrollo, no aplicado en `eta15_dev`)**: la semilla 0004 dio lectura global de alumnos a `trabajo_social` y `control_acceso` (columnas siguientes). La propuesta `tools/db/proposals/0008-students-rbac.proposal.sql` la retira (política cerrada por defecto); ver [modelo-alumnos-matriculas.md](modelo-alumnos-matriculas.md).
+
 `✓` todos · `G` grupos asignados · `B` datos básicos · `—` ninguno · `(A)` autoridad.
 
 (¹) Desde la migración **0006** (aplicada en `eta15_dev` el 2026-10-26) la administración del catálogo es el permiso escolar `catalog:manage_school`, solo de `direccion`; `admin_tecnico` pierde `catalog:manage` (que queda definido sin asignar) y `catalog:read` (el catálogo no necesita permisos técnicos); prefectura, trabajo social y control de acceso pierden `catalog:read` hasta que exista requerimiento (ver [modelo-catalogo-escolar.md](modelo-catalogo-escolar.md)). La tabla muestra el estado vigente tras 0006.

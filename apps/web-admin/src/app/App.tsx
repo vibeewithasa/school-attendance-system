@@ -3,6 +3,7 @@ import { Layout } from './Layout';
 import { ActivationPage } from '../features/activation/ActivationPage';
 import { LoginPage } from '../features/auth/LoginPage';
 import { RequireAuth } from '../features/auth/RequireAuth';
+import { StudentsPage } from '../features/alumnos/StudentsPage';
 import { CatalogPage } from '../features/catalogo/CatalogPage';
 import { HomePage } from '../features/home/HomePage';
 import { NotFoundPage } from '../features/home/NotFoundPage';
@@ -18,6 +19,7 @@ export function App() {
           <Route index element={<HomePage />} />
           <Route path="personal" element={<PersonalPage />} />
           <Route path="catalogo" element={<CatalogPage />} />
+          <Route path="alumnos" element={<StudentsPage />} />
         </Route>
       </Route>
       {/* Fuera de la zona protegida: una ruta desconocida no revela nada de la aplicacion. */}

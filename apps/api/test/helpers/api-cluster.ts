@@ -68,9 +68,14 @@ export function privilegeStatements(file: string): string[] {
     .filter(Boolean);
 }
 
+/** Indice (base 0) de la migracion 0007_students_enrollments en el journal. */
+const FIRST_STUDENTS_MIGRATION = 7;
+
 export interface ApiClusterOptions {
   /** Aplica la PROPUESTA 0002 (escritura del catalogo escolar). Por defecto NO, como en eta15_dev real. */
   catalogWrite?: boolean;
+  /** Aplica la PROPUESTA 0003 (acceso por columna a alumnos, matriculas e historial de grupo). Por defecto NO. */
+  studentsWrite?: boolean;
 }
 
 export async function startApiCluster(
@@ -82,15 +87,23 @@ export async function startApiCluster(
   await superuser.query(`create role eta15_app login`);
   await superuser.query(`create database eta15_dev owner eta15_app`);
   const owner = await pgt.connect('eta15_app', 'eta15_dev');
-  await applyMigrations(owner);
+  // Misma historia que eta15_dev: los roles y sus privilegios (PASO 1-3, 2026-10-26) se aplicaron con 0000-0006; las tablas de la
+  // migracion 0007 nacen DESPUES y NO heredan ningun privilegio de eta15_api (los concede la propuesta 0003, aparte).
+  await applyMigrations(owner, { until: FIRST_STUDENTS_MIGRATION });
   for (const stmt of step('PASO 1')) await superuser.query(stmt);
   for (const stmt of step('PASO 2')) await owner.query(stmt);
   for (const stmt of step('PASO 3')) await superuser.query(stmt);
+  await applyMigrations(owner, { from: FIRST_STUDENTS_MIGRATION });
   if (options.catalogWrite) {
     for (const stmt of privilegeStatements('0002-school-catalog-write.proposal.sql'))
       await owner.query(stmt);
     // Verificacion oficial de solo lectura: falla si los privilegios efectivos difieren de lo esperado.
     await owner.query(privilegeFile('0002-school-catalog-write.verify.sql'));
+  }
+  if (options.studentsWrite) {
+    for (const stmt of privilegeStatements('0003-students-write.proposal.sql'))
+      await owner.query(stmt);
+    await owner.query(privilegeFile('0003-students-write.verify.sql'));
   }
   const pool = new pg.Pool({
     host: '127.0.0.1',

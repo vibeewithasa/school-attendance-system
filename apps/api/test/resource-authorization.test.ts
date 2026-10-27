@@ -196,15 +196,12 @@ describe('autorizacion por campo sensible', () => {
     medicalNotes: 'students:read',
   };
 
-  it('control_acceso solo ve datos basicos', () => {
-    expect(projectFields(student, spec, principal('c', ['control_acceso']))).toEqual({
-      id: 'a1',
-      fullName: 'Alumno de prueba',
-      group: '1A',
-    });
+  it('control_acceso y trabajo_social no ven ningun campo de alumnos (politica cerrada de la migracion 0008)', () => {
+    expect(projectFields(student, spec, principal('c', ['control_acceso']))).toEqual({});
+    expect(projectFields(student, spec, principal('t', ['trabajo_social']))).toEqual({});
   });
-  it('trabajo_social y prefectura (con el expediente) ven los campos protegidos', () => {
-    expect(Object.keys(projectFields(student, spec, principal('t', ['trabajo_social'])))).toContain(
+  it('direccion y prefectura (con el expediente) ven los campos protegidos; el alcance lo aplica la consulta', () => {
+    expect(Object.keys(projectFields(student, spec, principal('d', ['direccion'])))).toContain(
       'curp',
     );
     expect(Object.keys(projectFields(student, spec, principal('p', ['prefectura'])))).toContain(
