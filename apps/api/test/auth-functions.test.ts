@@ -11,6 +11,12 @@ import { failure, freshDb } from './helpers/pglite.js';
  */
 
 const EXPECTED_FUNCTIONS = [
+  'att_days_guard_insert',
+  'att_days_guard_update',
+  'att_records_guard_insert',
+  'att_records_guard_update',
+  'attendance_events_no_update',
+  'attendance_no_delete',
   'audit_events_immutable',
   'auth_current_actor',
   'auth_is_schema_owner',
@@ -28,6 +34,7 @@ const EXPECTED_FUNCTIONS = [
   'roles_audit_update',
   'roles_guard',
   'school_records_no_delete',
+  'school_years_guard_attendance_dates',
   'school_years_guard_dates',
   'school_years_guard_prefect_dates',
   'sessions_before_insert',

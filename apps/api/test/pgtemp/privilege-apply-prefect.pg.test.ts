@@ -28,7 +28,12 @@ const canRead = async () =>
 
 beforeEach(async () => {
   if (cluster) await cluster.stop();
-  cluster = await startApiCluster(5, { catalogWrite: true, studentsWrite: true });
+  // (0005 ya aplicada: el trigger de fechas del ciclo de la 0010 tambien lee la asistencia)
+  cluster = await startApiCluster(5, {
+    catalogWrite: true,
+    studentsWrite: true,
+    attendanceWrite: true,
+  });
 }, 240_000);
 afterAll(async () => {
   if (cluster) await cluster.stop();

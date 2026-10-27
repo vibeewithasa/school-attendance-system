@@ -45,6 +45,9 @@ export function permissionsOf(me: AuthMeResponse) {
     /** Asignaciones de grupos a prefectura: solo con alcance `all` (la prefectura solo consulta las suyas, por Android). */
     canViewPrefectAssignments: hasAll('prefect_assignments:read'),
     canManagePrefectAssignments: hasAll('prefect_assignments:manage'),
+    /** Asistencia diaria (solo presentacion; el servidor autoriza y aplica el alcance por grupo). */
+    canViewAttendance: has.has('attendance:read'),
+    canCaptureAttendance: has.has('attendance:capture'),
     canCreate: (domain: Domain) => has.has(`users:manage_${domain}`),
     canGrant: (domain: Domain) => has.has(`roles:grant_${domain}`),
     canDisable: (domain: Domain) =>

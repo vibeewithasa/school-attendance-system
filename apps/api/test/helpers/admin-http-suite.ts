@@ -39,7 +39,10 @@ export interface AdminSuiteExtras {
 export interface AdminKit {
   harness: Harness;
   app: () => FastifyInstance;
-  build: (limits?: Partial<AuthLimits>) => Promise<FastifyInstance>;
+  build: (
+    limits?: Partial<AuthLimits>,
+    extra?: { schoolToday?: () => string },
+  ) => Promise<FastifyInstance>;
   seed: (opts: Seed) => Promise<Account>;
   login: (account: Account, target?: FastifyInstance) => Promise<Login>;
   call: (
@@ -89,7 +92,7 @@ export function defineAdminHttpSuite(
     const logs: string[] = [];
     const secrets = new Set<string>();
 
-    const build = (limits: Partial<AuthLimits> = {}) =>
+    const build = (limits: Partial<AuthLimits> = {}, extra: { schoolToday?: () => string } = {}) =>
       buildApp(
         loadEnv({
           NODE_ENV: 'test',
@@ -99,7 +102,12 @@ export function defineAdminHttpSuite(
           AUTH_MFA_ENFORCEMENT: 'deferred',
         }),
         {
-          auth: { store: harness.store, passwords, limits: { ...GENEROUS, ...limits } },
+          auth: {
+            store: harness.store,
+            passwords,
+            limits: { ...GENEROUS, ...limits },
+            ...(extra.schoolToday ? { schoolToday: extra.schoolToday } : {}),
+          },
           logStream: { write: (c: string) => void logs.push(c) },
         },
       );

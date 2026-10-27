@@ -24,6 +24,7 @@ function suite(label: string, mode: 'full' | 'unavailable') {
       catalogWrite: true,
       studentsWrite: true,
       prefectWrite: mode === 'full',
+      attendanceWrite: true, // los triggers de fechas del ciclo (0010) leen la asistencia
     });
     clusters.push(cluster);
   }, 240_000);

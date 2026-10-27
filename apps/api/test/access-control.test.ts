@@ -94,7 +94,7 @@ describe('resolveAccess: denegar por defecto y alcance', () => {
   it('si algun rol concede all, domina sobre assigned_groups', async () => {
     const access = await resolveAccess(
       grantsOf('prefectura', 'trabajo_social'),
-      'attendance:read',
+      'justifications:read',
       'pref-1',
       '2026-10-26',
       assigned,

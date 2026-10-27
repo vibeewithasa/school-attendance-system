@@ -8,6 +8,8 @@ import { CatalogPage } from '../features/catalogo/CatalogPage';
 import { HomePage } from '../features/home/HomePage';
 import { NotFoundPage } from '../features/home/NotFoundPage';
 import { PersonalPage } from '../features/personal/PersonalPage';
+import { AttendanceDayPage } from '../features/asistencia/AttendanceDayPage';
+import { AttendancePage } from '../features/asistencia/AttendancePage';
 import { PrefectAssignmentsPage } from '../features/prefectura/PrefectAssignmentsPage';
 
 export function App() {
@@ -22,6 +24,8 @@ export function App() {
           <Route path="catalogo" element={<CatalogPage />} />
           <Route path="alumnos" element={<StudentsPage />} />
           <Route path="prefectura" element={<PrefectAssignmentsPage />} />
+          <Route path="asistencia" element={<AttendancePage />} />
+          <Route path="asistencia/:dayId" element={<AttendanceDayPage />} />
         </Route>
       </Route>
       {/* Fuera de la zona protegida: una ruta desconocida no revela nada de la aplicacion. */}

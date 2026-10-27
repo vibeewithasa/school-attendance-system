@@ -165,11 +165,12 @@ export function createSchoolCatalogService(options: SchoolCatalogOptions) {
       case '23514':
         if (
           e.constraint === 'school_years_enrollments_within' ||
-          e.constraint === 'school_years_prefect_within'
+          e.constraint === 'school_years_prefect_within' ||
+          e.constraint === 'school_years_attendance_within'
         )
           return fail(
             'CONFLICT',
-            'Hay matrículas, periodos de grupo o asignaciones de prefectura fuera de las nuevas fechas del ciclo; las fechas no pueden dejar fuera el historial',
+            'Hay matrículas, periodos de grupo, asignaciones de prefectura o listas de asistencia fuera de las nuevas fechas del ciclo; las fechas no pueden dejar fuera el historial',
           );
         return fail('VALIDATION', 'Los datos no cumplen las reglas del catálogo');
       case '22007':
@@ -180,10 +181,14 @@ export function createSchoolCatalogService(options: SchoolCatalogOptions) {
         return fail('VALIDATION', 'Los datos no cumplen las reglas del catálogo');
       case '42501':
         // Cambiar las fechas de un ciclo dispara un trigger (0007) que lee matriculas y periodos de grupo con los privilegios de la API.
-        if (/enrollments|student_group_assignments|prefect_group_assignments/.test(e.message ?? ''))
+        if (
+          /enrollments|student_group_assignments|prefect_group_assignments|attendance_days/.test(
+            e.message ?? '',
+          )
+        )
           return fail(
             'WRITE_UNAVAILABLE',
-            'La base de datos aún no habilita a la API el acceso a matrículas y asignaciones de prefectura (propuestas de privilegios 0003 y 0004): sin él no pueden cambiarse las fechas de un ciclo',
+            'La base de datos aún no habilita a la API el acceso a matrículas, asignaciones de prefectura y asistencia (propuestas de privilegios 0003, 0004 y 0005): sin él no pueden cambiarse las fechas de un ciclo',
           );
         return fail(
           'WRITE_UNAVAILABLE',

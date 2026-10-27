@@ -78,6 +78,8 @@ export interface ApiClusterOptions {
   studentsWrite?: boolean;
   /** Aplica la PROPUESTA 0004 (acceso por columna a las asignaciones de grupos a prefectura). Por defecto NO. */
   prefectWrite?: boolean;
+  /** Aplica la PROPUESTA 0005 (acceso por columna a la asistencia diaria). Por defecto NO. */
+  attendanceWrite?: boolean;
 }
 
 export async function startApiCluster(
@@ -111,6 +113,11 @@ export async function startApiCluster(
     for (const stmt of privilegeStatements('0004-prefect-assignments-write.proposal.sql'))
       await owner.query(stmt);
     await owner.query(privilegeFile('0004-prefect-assignments-write.verify.sql'));
+  }
+  if (options.attendanceWrite) {
+    for (const stmt of privilegeStatements('0005-attendance-write.proposal.sql'))
+      await owner.query(stmt);
+    await owner.query(privilegeFile('0005-attendance-write.verify.sql'));
   }
   const pool = new pg.Pool({
     host: '127.0.0.1',

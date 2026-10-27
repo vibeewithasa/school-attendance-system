@@ -24,6 +24,7 @@ function suite(label: string, privileges: 'full' | 'none') {
       catalogWrite: privileges === 'full',
       studentsWrite: privileges === 'full',
       prefectWrite: privileges === 'full',
+      attendanceWrite: privileges === 'full',
     });
     clusters.push(cluster);
   }, 240_000);

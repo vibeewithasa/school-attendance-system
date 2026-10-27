@@ -29,7 +29,11 @@ const canRead = async () =>
 beforeEach(async () => {
   if (cluster) await cluster.stop();
   // Como eta15_dev: la propuesta 0002 (catalogo) ya esta aplicada; 0003 la exige en su preflight.
-  cluster = await startApiCluster(5, { catalogWrite: true, prefectWrite: true });
+  cluster = await startApiCluster(5, {
+    catalogWrite: true,
+    prefectWrite: true,
+    attendanceWrite: true,
+  });
 }, 240_000);
 afterAll(async () => {
   if (cluster) await cluster.stop();

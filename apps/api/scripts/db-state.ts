@@ -105,6 +105,11 @@ async function main(): Promise<number> {
         students: await count('students'),
         enrollments: await count('enrollments'),
         groupAssignments: await count('student_group_assignments'),
+        prefectAssignments: await count('prefect_group_assignments'),
+        // null = la tabla no existe (migracion 0010 sin aplicar)
+        attendanceDays: await count('attendance_days'),
+        attendanceRecords: await count('attendance_records'),
+        attendanceEvents: await count('attendance_events'),
         permissions: await count('permissions'),
         rolePermissions: await count('role_permissions'),
         auditEvents: await count('audit_events'),
@@ -158,7 +163,8 @@ async function main(): Promise<number> {
                 bool_or(has_table_privilege('eta15_api', c.oid, 'REFERENCES')) AS can_references
            FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
           WHERE c.relnamespace = 'public'::regnamespace
-            AND c.relname IN ('students', 'enrollments', 'student_group_assignments')
+            AND c.relname IN ('students', 'enrollments', 'student_group_assignments', 'prefect_group_assignments',
+                              'attendance_days', 'attendance_records', 'attendance_events')
           GROUP BY c.relname ORDER BY 1`,
       ),
     };

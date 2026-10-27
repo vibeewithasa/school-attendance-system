@@ -50,3 +50,4 @@ export * from './password-policy.js';
 export * from './school-catalog.js';
 export * from './students.js';
 export * from './prefect-assignments.js';
+export * from './attendance.js';

@@ -23,6 +23,7 @@ function suite(label: string, mode: 'full' | 'unavailable') {
       catalogWrite: true,
       studentsWrite: mode === 'full',
       prefectWrite: true, // los triggers de fechas del ciclo (0009) leen las asignaciones de prefectura
+      attendanceWrite: true, // y los de la 0010 leen la asistencia
     });
     clusters.push(cluster);
   }, 240_000);

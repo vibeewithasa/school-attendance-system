@@ -65,6 +65,11 @@ export function Layout() {
                 Alumnos
               </NavLink>
             )}
+            {permissionsOf(me).canViewAttendance && (
+              <NavLink to="/asistencia" className={navClass}>
+                Asistencia
+              </NavLink>
+            )}
             {permissionsOf(me).canViewPrefectAssignments && (
               <NavLink to="/prefectura" className={navClass}>
                 Asignaciones de prefectura

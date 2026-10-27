@@ -118,7 +118,7 @@ describe('semilla en la base (0005) = catalogo en codigo', () => {
     );
     expect(r.rows[0]!.n).toBe(0);
   });
-  it('NO siembra usuarios, sesiones ni tokens; la unica auditoria es la de las altas/bajas de 0006, 0008 y 0009', async () => {
+  it('NO siembra usuarios, sesiones ni tokens; la unica auditoria es la de las altas/bajas de 0006, 0008, 0009 y 0010', async () => {
     for (const t of ['users', 'user_roles', 'sessions', 'auth_tokens']) {
       const r = await db.query<{ n: number }>(`select count(*)::int n from ${t}`);
       expect(r.rows[0]!.n, t).toBe(0);
@@ -128,15 +128,15 @@ describe('semilla en la base (0005) = catalogo en codigo', () => {
     );
     // 0006 (politica del catalogo): 1 alta (direccion) + 5 bajas (2 de admin_tecnico y 3 roles escolares); 0008 (alumnos): 3 bajas;
     // 0009 (prefectura): 3 altas (2 de direccion, 1 de prefectura) + 1 baja (students:read de prefectura);
-    // todas sin actor (migracion)
-    expect(audit.rows).toHaveLength(13);
+    // 0010 (asistencia): 1 baja (attendance:read global de trabajo_social); todas sin actor (migracion)
+    expect(audit.rows).toHaveLength(14);
     expect(
       audit.rows.every(
         (x) => x.event_type === 'role.permissions_changed' && x.actor_user_id === null,
       ),
     ).toBe(true);
   });
-  it('la cadena de semilla (0004 + 0006 + 0008 + 0009) es idempotente: reaplicarla no cambia nada', async () => {
+  it('la cadena de semilla (0004 + 0006 + 0008 + 0009 + 0010) es idempotente: reaplicarla no cambia nada', async () => {
     const count = () =>
       db.query<{ n: number }>(
         `select (select count(*) from permissions)::int + (select count(*) from roles)::int + (select count(*) from role_permissions)::int n`,
@@ -147,13 +147,16 @@ describe('semilla en la base (0005) = catalogo en codigo', () => {
       '0006_catalog_rbac_school_management.sql',
       '0008_students_rbac_policy.sql',
       '0009_prefect_group_assignments.sql',
+      '0010_daily_attendance.sql',
     ]) {
       const sql = readFileSync(join(import.meta.dirname, '..', 'drizzle', file), 'utf8');
-      // 0009 mezcla DDL (no repetible) y la parte RBAC (idempotente): solo se repite la ultima.
+      // 0009 y 0010 mezclan DDL (no repetible) y la parte RBAC (idempotente): solo se repite la ultima.
       const statements = sql.split('--> statement-breakpoint');
       const from = file.startsWith('0009')
         ? statements.findIndex((x) => x.includes('INSERT INTO "permissions"'))
-        : 0;
+        : file.startsWith('0010')
+          ? statements.findIndex((x) => x.includes('DELETE FROM "role_permissions"'))
+          : 0;
       for (const stmt of statements.slice(from)) await db.exec(stmt);
     }
     const after = await count();

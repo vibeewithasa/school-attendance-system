@@ -2,18 +2,18 @@
 
 Última actualización: 2026-10-26.
 
-| Componente                  | Estado             | Detalle                                                                               |
-| --------------------------- | ------------------ | ------------------------------------------------------------------------------------- |
-| `apps/api`                  | Inicializado       | Fastify 5, config con Zod, errores centralizados, logs JSON, `GET /health`, 4 pruebas |
-| Drizzle / base de datos     | Preparado          | `drizzle.config.ts`, `src/db/client.ts` y esquema vacío. Sin tablas, sin migraciones  |
-| `apps/web-admin`            | Inicializado       | React 19 + Vite + Tailwind 4, routing, `ErrorBoundary`, pantalla inicial. Sin pruebas |
-| `packages/shared-contracts` | Inicializado       | Tipos `HealthResponse` y `ApiErrorBody`                                               |
-| `packages/ui`               | Reservado          | Vacío                                                                                 |
-| `apps/android-prefectura`   | Sin implementación | Solo carpeta (`.gitkeep`)                                                             |
-| `apps/access-pwa`           | Sin implementación | Solo carpeta (`.gitkeep`)                                                             |
-| Módulos escolares           | En curso           | Catálogo, alumnos y matrículas (esquema aplicado, sin datos); asistencia no iniciada  |
-| PostgreSQL local            | Operativo          | Base `eta15_dev`, rol `eta15_app` (sin privilegios administrativos). Ver ADR 0003     |
-| Emblema institucional       | Pendiente          | No está en el repositorio; `Emblem.tsx` es un marcador                                |
+| Componente                  | Estado             | Detalle                                                                                       |
+| --------------------------- | ------------------ | --------------------------------------------------------------------------------------------- |
+| `apps/api`                  | Inicializado       | Fastify 5, config con Zod, errores centralizados, logs JSON, `GET /health`, 4 pruebas         |
+| Drizzle / base de datos     | Preparado          | `drizzle.config.ts`, `src/db/client.ts` y esquema vacío. Sin tablas, sin migraciones          |
+| `apps/web-admin`            | Inicializado       | React 19 + Vite + Tailwind 4, routing, `ErrorBoundary`, pantalla inicial. Sin pruebas         |
+| `packages/shared-contracts` | Inicializado       | Tipos `HealthResponse` y `ApiErrorBody`                                                       |
+| `packages/ui`               | Reservado          | Vacío                                                                                         |
+| `apps/android-prefectura`   | Sin implementación | Solo carpeta (`.gitkeep`)                                                                     |
+| `apps/access-pwa`           | Sin implementación | Solo carpeta (`.gitkeep`)                                                                     |
+| Módulos escolares           | En curso           | Catálogo, alumnos, prefectura (aplicados, sin datos); asistencia preparada (0010 sin aplicar) |
+| PostgreSQL local            | Operativo          | Base `eta15_dev`, rol `eta15_app` (sin privilegios administrativos). Ver ADR 0003             |
+| Emblema institucional       | Pendiente          | No está en el repositorio; `Emblem.tsx` es un marcador                                        |
 
 ## Sprint 1 (en curso)
 
@@ -79,7 +79,20 @@ Esquema y permisos mínimos **APLICADOS en `eta15_dev` el 2026-10-27**, **sin ni
 - **Privilegios 0004 (APLICADOS)**: 3 `GRANT` por columna con `pnpm db:apply-privileges 0004-prefect-assignments-write` (ensayo con `ROLLBACK`, luego `--execute`); el preflight exige 0002, 0003 y 0009.
 - **Interfaz** `/prefectura`: listado e historial, asignar varios grupos con cobertura temporal, cerrar y revocar con confirmación; la navegación ahora admite varias filas en móvil.
 - **Pruebas** (2026-10-27): 867 unitarias (740 API + 127 React), 36 de integración con la base real (solo lectura) y 361 en clúster PostgreSQL desechable; además el resultado en navegador real contra `pnpm dev:sandbox -- --catalog-write --students-write --prefect-write` (dos prefectas ficticias; una revocación le quitó el grupo a una sesión viva en menos de un segundo).
-- **Aplicación en `eta15_dev`** (2026-10-27, con autorización explícita): preflight de solo lectura (`pnpm db:state`, hashes SHA-256 del SQL), respaldo `C:UsersasaheBackupsETA15eta15_dev_pre-0009-0004_20261027-015630.dump` (118 362 bytes, 260 entradas, SHA-256 `8D54EC0650C15B560EB1EF1381270FF2CCDA788068ACB50939DB124AF4C2D171`, `pg_restore --list` correcto) con resumen no sensible `…summary.txt`; `pnpm db:migrate` (solo 0009); ensayo y `--execute` de 0004; verificación como `eta15_api` dentro de `BEGIN … ROLLBACK` (nada persistió). Sin cuentas reales de prefectura hasta el bootstrap escolar (D-ESC).
+- **Aplicación en `eta15_dev`** (2026-10-27, con autorización explícita): preflight de solo lectura (`pnpm db:state`, hashes SHA-256 del SQL), respaldo `C:\Users\asahe\Backups\ETA15\eta15_dev_pre-0009-0004_20261027-015630.dump` (118 362 bytes, 260 entradas, SHA-256 `8D54EC0650C15B560EB1EF1381270FF2CCDA788068ACB50939DB124AF4C2D171`, `pg_restore --list` correcto) con resumen no sensible `…summary.txt`; `pnpm db:migrate` (solo 0009); ensayo y `--execute` de 0004; verificación como `eta15_api` dentro de `BEGIN … ROLLBACK` (nada persistió). Sin cuentas reales de prefectura hasta el bootstrap escolar (D-ESC).
+
+## Asistencia diaria (rama `feat/daily-attendance`)
+
+Implementada y validada en entornos aislados; **migración 0010 y privilegios 0005 PREPARADOS y SIN APLICAR en `eta15_dev`** (que sigue con 10 migraciones, 14 tablas, 29 permisos, 37 asignaciones, 13 eventos de auditoría y **0 datos**). Detalle, reglas, decisiones provisionales y futuras en [diseno-asistencia-diaria.md](diseno-asistencia-diaria.md).
+
+- **Requisitos de la escuela**: una lista por grupo y fecha escolar (no por materia), de lunes a viernes y a cualquier hora, `America/Mazatlan`, varias personas con acceso al mismo grupo, la asistencia sobrevive a los cambios de grupo; justificantes y puerta son otros módulos.
+- **Modelo** (migración **0010**): `attendance_days` (`UNIQUE (group_id, attendance_date)`, CHECK lunes a viernes, borrador/finalizada con `revision`), `attendance_records` (padrón **congelado** al abrir, FK compuestas a la matrícula del mismo ciclo y a la asignación de grupo histórica) y `attendance_events` (historial solo-agregar). Triggers de integridad (fecha no futura, grupo activo, ciclo, padrón vigente, finalización sin pendientes, inmutabilidad); sin `DELETE` ni cascadas; las fechas del ciclo no pueden dejar listas fuera.
+- **RBAC** (misma migración): se **retira `attendance:read` con alcance `all` a `trabajo_social`** (brecha de la semilla 0004; 1 evento de auditoría; 36 asignaciones de permisos al aplicarla). `attendance:correct` queda reservado **sin operación** (decisión institucional pendiente).
+- **API** `/school/attendance/*` (`today`, abrir o recuperar la lista, listar, detalle, guardar borrador, finalizar, historial): fecha decidida por el servidor, 404 indistinguible fuera de alcance, CSRF/Origin, control optimista por `revision`, guardados idempotentes por `requestId`, acceso revalidado **con bloqueo** en cada escritura, auditoría con IDs.
+- **Privilegios 0005** (propuesta + `apply` con preflight + `verify`): 8 `GRANT` por columna; el historial solo admite `SELECT` e `INSERT`; la hora la fijan triggers o `DEFAULT`. Se aplicarán con `pnpm db:apply-privileges 0005-attendance-write` solo con autorización.
+- **Interfaz** `/asistencia`: grupos del día, captura Presente/Ausente, pendientes, guardar borrador, finalizar con confirmación, aviso de conflicto con recarga que respeta lo que marcó otra persona; accesible y probada a 375 px.
+- **Pruebas** (2026-10-27): 966 unitarias (814 API + 152 React), 41 de integración con la base real (solo lectura; reconocen el estado "sin 0010"), 442 en clúster PostgreSQL desechable (concurrencia real, privilegios reales de `eta15_api`, 0010 aplicada incrementalmente sobre 0000–0009 con datos previos) y una pasada en navegador real contra `pnpm dev:sandbox -- --catalog-write --students-write --prefect-write --attendance-write --seed-attendance` (dos prefectas con cobertura compartida; conflicto de versión, recarga, finalización, acceso a un grupo ajeno, sábado y vista móvil).
+- **Fuera de alcance**: Android, sincronización offline, justificantes, retardos de puerta, MFA, reportes y alertas.
 
 ## Limitaciones conocidas
 

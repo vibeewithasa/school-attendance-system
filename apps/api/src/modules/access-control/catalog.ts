@@ -269,15 +269,15 @@ export const ROLES: readonly RoleDef[] = [
   {
     key: 'trabajo_social',
     name: 'Trabajo social',
-    description: 'Gestiona justificantes y consulta expedientes y asistencia',
+    description: 'Gestiona justificantes',
     domain: 'school',
     requiresMfa: false,
     sessionIdleMinutes: 60,
     sessionAbsoluteMinutes: 720,
     maxConcurrentSessions: 5,
     grants: [
-      // Sin students:* global (0008): alumnos cerrado por defecto hasta que la institucion defina sus funciones y datos.
-      g('attendance:read'),
+      // Sin students:* global (0008) ni attendance:read global (0010): cerrado por defecto hasta que la institucion defina sus
+      // funciones y datos; tendra un permiso especifico para sus justificantes.
       g('justifications:read'),
       g('justifications:manage'),
     ],

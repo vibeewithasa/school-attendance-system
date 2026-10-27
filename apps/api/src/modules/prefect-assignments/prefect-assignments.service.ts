@@ -101,6 +101,34 @@ export function pgGroupAssignments(tx: SqlClient): GroupAssignments {
   };
 }
 
+/**
+ * Funcion publica para operaciones de ESCRITURA que dependen del acceso a un grupo (p. ej. capturar asistencia): vuelve a comprobar
+ * que `userId` sigue teniendo acceso a `groupId` en `date` y BLOQUEA (FOR SHARE) las filas que lo sustentan (la asignacion y la
+ * cuenta). Una revocacion, un cierre o una desactivacion simultaneos esperan a que termine la operacion en curso, o ya se vieron
+ * aqui: nunca hay una captura "a medias" despues de retirar el acceso. Sin tabla o sin privilegios devuelve false (deniega).
+ */
+export async function lockGroupAccess(
+  tx: SqlClient,
+  userId: string,
+  groupId: string,
+  date: string,
+): Promise<boolean> {
+  await tx.query('SAVEPOINT group_access_lock');
+  try {
+    const r = await tx.query<{ id: string }>(
+      `SELECT a.id ${FROM_SQL} WHERE a.user_id = $2 AND a.group_id = $3 AND (${GRANTS_ACCESS_SQL}) FOR SHARE OF a, u`,
+      [date, userId, groupId],
+    );
+    await tx.query('RELEASE SAVEPOINT group_access_lock');
+    return r.rows.length > 0;
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code !== '42P01' && code !== '42501') throw error;
+    await tx.query('ROLLBACK TO SAVEPOINT group_access_lock');
+    return false;
+  }
+}
+
 interface Row {
   id: string;
   user_id: string;

@@ -71,6 +71,13 @@
       "when": 1793087877701,
       "tag": "0009_prefect_group_assignments",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793126421411,
+      "tag": "0010_daily_attendance",
+      "breakpoints": true
     }
   ]
 }

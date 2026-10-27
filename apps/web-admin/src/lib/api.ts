@@ -1,4 +1,15 @@
 import type {
+  AttendanceDayDetail,
+  AttendanceDayList,
+  AttendanceEventList,
+  AttendanceTodayResponse,
+  FinalizeAttendanceDayBody,
+  FinalizeAttendanceDayResponse,
+  ListAttendanceDaysQuery,
+  OpenAttendanceDayBody,
+  OpenAttendanceDayResponse,
+  SaveAttendanceMarksBody,
+  SaveAttendanceMarksResponse,
   ClosePrefectAssignmentBody,
   CreatePrefectAssignmentBody,
   ListPrefectAssignmentsQuery,
@@ -229,6 +240,20 @@ export const api = {
     mutate<PrefectAssignmentDto>(`/school/prefect-assignments/${id}/close`, 'POST', body),
   revokePrefectAssignment: (id: string, body: RevokePrefectAssignmentBody) =>
     mutate<PrefectAssignmentDto>(`/school/prefect-assignments/${id}/revoke`, 'POST', body),
+
+  // --- Asistencia diaria (una lista por grupo y fecha; la fecha la decide el servidor). Sin borrado ni correcciones. ---
+  attendanceToday: () => request<AttendanceTodayResponse>('/school/attendance/today'),
+  openAttendanceDay: (body: OpenAttendanceDayBody) =>
+    mutate<OpenAttendanceDayResponse>('/school/attendance/days', 'POST', body),
+  listAttendanceDays: (q: Partial<ListAttendanceDaysQuery> = {}) =>
+    request<AttendanceDayList>(`/school/attendance/days${query({ ...q })}`),
+  getAttendanceDay: (id: string) => request<AttendanceDayDetail>(`/school/attendance/days/${id}`),
+  saveAttendanceMarks: (id: string, body: SaveAttendanceMarksBody) =>
+    mutate<SaveAttendanceMarksResponse>(`/school/attendance/days/${id}/marks`, 'POST', body),
+  finalizeAttendanceDay: (id: string, body: FinalizeAttendanceDayBody) =>
+    mutate<FinalizeAttendanceDayResponse>(`/school/attendance/days/${id}/finalize`, 'POST', body),
+  listAttendanceEvents: (id: string, q: { page?: number; pageSize?: number } = {}) =>
+    request<AttendanceEventList>(`/school/attendance/days/${id}/events${query({ ...q })}`),
 
   // --- Activacion por la persona titular (rutas publicas; el secreto nunca sale de esta pagina salvo al completar) ---
   activationRequest: (email: string, secretHash: string) =>

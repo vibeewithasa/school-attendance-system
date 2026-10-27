@@ -26,7 +26,24 @@ async function main(): Promise<void> {
   const studentsWrite = process.argv.includes('--students-write');
   // --prefect-write aplica la propuesta 0004 (asignaciones de grupos a prefectura), tambien solo en este clúster.
   const prefectWrite = process.argv.includes('--prefect-write');
-  const cluster = await startApiCluster(10, { catalogWrite, studentsWrite, prefectWrite });
+  // --attendance-write aplica la propuesta 0005 (asistencia diaria), tambien solo en este clúster.
+  const attendanceWrite = process.argv.includes('--attendance-write');
+  // --seed-attendance siembra datos FICTICIOS para probar la asistencia (ciclo, grupos, alumnos y asignaciones de prefectura).
+  const seedAttendance = process.argv.includes('--seed-attendance');
+  // --school-today=AAAA-MM-DD fija el "hoy" escolar de la asistencia SOLO en este entorno (p. ej. un sabado para probar el rechazo).
+  const schoolTodayArg = process.argv.find((a) => a.startsWith('--school-today='))?.slice(15);
+  if (schoolTodayArg !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(schoolTodayArg))
+    throw new Error('--school-today debe tener el formato AAAA-MM-DD');
+  if (seedAttendance && !(catalogWrite && studentsWrite && prefectWrite && attendanceWrite))
+    throw new Error(
+      '--seed-attendance requiere --catalog-write --students-write --prefect-write --attendance-write',
+    );
+  const cluster = await startApiCluster(10, {
+    catalogWrite,
+    studentsWrite,
+    prefectWrite,
+    attendanceWrite,
+  });
   // Aislamiento: el clúster desechable usa un puerto propio; jamas el del servicio de PostgreSQL de Windows (5432).
   if (cluster.pgt.port === 5432) {
     await cluster.stop();
@@ -105,6 +122,74 @@ async function main(): Promise<void> {
     accounts.push({ rol: 'prefectura', correo, contrasena: prefPw });
   }
 
+  if (seedAttendance) {
+    // Datos FICTICIOS solo de este clúster desechable: un ciclo, dos grupos con alumnos inventados y asignaciones de prefectura
+    // "antiguas" (la API no permite retroceder una asignacion; aqui se siembran como propietario con el trigger de alta
+    // desactivado un instante). Prefectura 1: grupo A; prefectura 2: grupos A (cobertura compartida) y B.
+    const q = (sql: string, params: unknown[] = []) => cluster.owner.query(sql, params);
+    const day = (offset: number) =>
+      new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+    const year = (
+      await q(
+        `INSERT INTO school_years (name, starts_on, ends_on) VALUES ('Ciclo ficticio de asistencia', $1, $2) RETURNING id`,
+        [day(-120), day(240)],
+      )
+    ).rows[0].id as string;
+    const group = async (code: string) =>
+      (
+        await q(
+          `INSERT INTO groups (school_year_id, grade, code) VALUES ($1, 1, $2) RETURNING id`,
+          [year, code],
+        )
+      ).rows[0].id as string;
+    const gA = await group('A');
+    const gB = await group('B');
+    const GIVEN = ['Ana', 'Beto', 'Carla', 'Diego', 'Elena', 'Fabi', 'Gael'];
+    const FAMILY = ['Ficticia Uno', 'Ficticia Dos', 'Ficticia Tres', 'Ficticia Cuatro'];
+    let k = 0;
+    const pupil = async (g: string) => {
+      const st = (
+        await q(`INSERT INTO students (given_names, family_name) VALUES ($1, $2) RETURNING id`, [
+          GIVEN[k % GIVEN.length],
+          FAMILY[k % FAMILY.length],
+        ])
+      ).rows[0].id as string;
+      k += 1;
+      const en = (
+        await q(
+          `INSERT INTO enrollments (student_id, school_year_id, starts_on) VALUES ($1, $2, $3) RETURNING id`,
+          [st, year, day(-100)],
+        )
+      ).rows[0].id as string;
+      await q(
+        `INSERT INTO student_group_assignments (enrollment_id, school_year_id, group_id, starts_on) VALUES ($1, $2, $3, $4)`,
+        [en, year, g, day(-100)],
+      );
+    };
+    for (let i = 0; i < 5; i += 1) await pupil(gA);
+    for (let i = 0; i < 4; i += 1) await pupil(gB);
+    const boss = (await q(`SELECT id FROM users WHERE email = 'direccion.ficticia@escuela.test'`))
+      .rows[0].id as string;
+    const assign = async (email: string, g: string) => {
+      await q(`ALTER TABLE prefect_group_assignments DISABLE TRIGGER pga_guard_insert`);
+      try {
+        await q(
+          `INSERT INTO prefect_group_assignments (user_id, school_year_id, group_id, starts_on, created_by)
+           SELECT u.id, $2, $3, $4, $5 FROM users u WHERE u.email = $1`,
+          [email, year, g, day(-110), boss],
+        );
+      } finally {
+        await q(`ALTER TABLE prefect_group_assignments ENABLE TRIGGER pga_guard_insert`);
+      }
+    };
+    await assign('prefectura.ficticia@escuela.test', gA);
+    await assign('prefectura.dos.ficticia@escuela.test', gA);
+    await assign('prefectura.dos.ficticia@escuela.test', gB);
+    console.log(
+      'Datos ficticios de asistencia sembrados: ciclo, grupos 1.º A (5 alumnos) y 1.º B (4 alumnos).',
+    );
+  }
+
   const env = loadEnv({
     NODE_ENV: 'development',
     HOST: '127.0.0.1',
@@ -117,8 +202,16 @@ async function main(): Promise<void> {
     DB_USER: 'eta15_api',
   });
   const app = await buildApp(env, {
-    auth: { store: createPgSessionStore(cluster.pool), passwords },
+    auth: {
+      store: createPgSessionStore(cluster.pool),
+      passwords,
+      ...(schoolTodayArg ? { schoolToday: () => schoolTodayArg } : {}),
+    },
   });
+  if (schoolTodayArg)
+    console.log(
+      `AVISO: el "hoy" escolar de la asistencia esta fijado a ${schoolTodayArg} (solo este entorno desechable).`,
+    );
   await app.listen({ host: env.HOST, port: env.PORT });
 
   console.log(

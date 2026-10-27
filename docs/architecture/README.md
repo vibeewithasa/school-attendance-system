@@ -9,5 +9,6 @@ Resumen: monolito modular (API Fastify) + clientes web/Android/PWA sobre Postgre
 ```
 
 - Contratos tipados compartidos: `packages/shared-contracts`.
-- Estado actual (Sprint 0.4): solo `GET /health` (liveness) y pantalla inicial del portal.
-- Diagramas y descripciones de módulos se agregan aquí al diseñarlos.
+- Estado actual y módulos: [estado-del-proyecto.md](estado-del-proyecto.md).
+- Módulos escolares: [catálogo](modelo-catalogo-escolar.md), [alumnos y matrículas](modelo-alumnos-matriculas.md), [asignaciones de prefectura](modelo-asignaciones-prefectura.md) y [asistencia diaria](diseno-asistencia-diaria.md) (preparada; migración 0010 sin aplicar).
+- Seguridad y roles: [auth-rbac.md](auth-rbac.md), [roles-postgresql.md](roles-postgresql.md), [base-de-datos-local.md](base-de-datos-local.md).

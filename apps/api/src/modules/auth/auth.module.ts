@@ -20,8 +20,11 @@ import { createSchoolCatalogService } from '../school-catalog/school-catalog.ser
 import { prefectAssignmentsRoutes } from '../prefect-assignments/prefect-assignments.routes.js';
 import {
   createPrefectAssignmentsService,
+  lockGroupAccess,
   pgGroupAssignments,
 } from '../prefect-assignments/prefect-assignments.service.js';
+import { attendanceRoutes } from '../attendance/attendance.routes.js';
+import { createAttendanceService } from '../attendance/attendance.service.js';
 import { studentsRoutes } from '../students/students.routes.js';
 import { createStudentsService } from '../students/students.service.js';
 import { activationAdminRoutes, activationPublicRoutes } from '../activation/activation.routes.js';
@@ -36,6 +39,8 @@ export interface AuthModuleOptions {
   clock?: () => Date;
   /** Valores por defecto: ver `DEFAULT_AUTH_LIMITS`. Sobrescribibles en pruebas. */
   limits?: Partial<AuthLimits>;
+  /** SOLO PRUEBAS: "hoy" escolar (YYYY-MM-DD) de la asistencia. En produccion lo calcula la base (America/Mazatlan). */
+  schoolToday?: () => string;
 }
 
 export interface AuthLimits {
@@ -210,6 +215,19 @@ export async function registerAuth(
       // Asignaciones de grupos a prefectura: administra Direccion; la prefectura solo consulta las suyas (/me/groups).
       prefectAssignmentsRoutes(scope, {
         service: createPrefectAssignmentsService({ store: options.store }),
+        guards,
+        mfaDeferredAllowed:
+          env.AUTH_MFA_ENFORCEMENT === 'deferred' && env.NODE_ENV !== 'production',
+        floodLimit: limits.floodOther,
+      });
+      // Asistencia diaria (una lista por grupo y fecha): captura la prefectura de sus grupos, Direccion supervisa (ver attendance.service.ts).
+      attendanceRoutes(scope, {
+        service: createAttendanceService({
+          store: options.store,
+          assignments: pgGroupAssignments,
+          lockGroupAccess,
+          today: options.schoolToday,
+        }),
         guards,
         mfaDeferredAllowed:
           env.AUTH_MFA_ENFORCEMENT === 'deferred' && env.NODE_ENV !== 'production',

@@ -7,7 +7,7 @@ Estado: **implementado y APLICADO en `eta15_dev` el 2026-10-27, sin ningún dato
 - Hay tres prefectas; cada una consulta **únicamente** los grupos que tenga asignados y puede recibir varios. Nada se asigna automáticamente: **Dirección** administra.
 - **Política técnica provisional**: un grupo puede tener **más de una prefecta autorizada a la vez** (p. ej. cobertura temporal), pero la futura lista de asistencia será **una sola por grupo y fecha**,
   sin importar cuántas prefectas puedan atenderlo. Esto se resolverá en el módulo de asistencia (quién captura, qué pasa si dos capturan); aquí solo se autoriza la lectura.
-- No se define todavía el protocolo offline ni se implementa asistencia ni la app Android.
+- No se define todavía el protocolo offline ni se implementa la app Android. La asistencia diaria ya está implementada y consume este alcance (ver [diseno-asistencia-diaria.md](diseno-asistencia-diaria.md)): resuelve "una sola lista por grupo y fecha, capture quien capture" y, en toda **escritura**, vuelve a comprobar el acceso con bloqueo mediante la función pública `lockGroupAccess` (`FOR SHARE` de la asignación y la cuenta), de modo que una revocación simultánea espera a la captura en curso o ya se vio.
 
 ## Modelo (`prefect_group_assignments`, migración 0009)
 

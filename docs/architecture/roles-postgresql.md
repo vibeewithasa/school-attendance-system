@@ -74,6 +74,7 @@ Controles de identidad en código (nunca imprimen contraseñas):
 - **`eta15_app` sigue pudiendo iniciar sesión** y es dueño de todo: custodiar `.env.migrator`. Un superusuario o `eta15_app` pueden deshabilitar triggers; la auditoría no es absolutamente inmutable.
 - Con las guardas "solo propietario" ya efectivas frente a la API, **ninguna** autenticación funcional debe implementarse sobre un rol que no sea `eta15_api`.
 - Las futuras tablas/columnas que necesite la API requieren migraciones **y** un `GRANT` explícito revisado (no hay `GRANT … ON ALL TABLES` automático para tablas nuevas).
+- Propuestas de privilegios por módulo (`tools/db/privileges/`, cada una con `proposal`, `apply` con preflight y `verify`): `0002` catálogo, `0003` alumnos, `0004` asignaciones de prefectura (las tres **aplicadas** en `eta15_dev`) y `0005-attendance-write` (asistencia diaria: 8 `GRANT` por columna; el historial `attendance_events` solo admite `SELECT` e `INSERT`), **preparada y sin aplicar**. Cada una se ejecuta únicamente con `pnpm db:apply-privileges`.
 - La configuración es de **desarrollo local**; producción necesitará su propio procedimiento, rotación de credenciales y separación de red.
 
 ## 6. Procedimiento de reversión (no ejecutado)

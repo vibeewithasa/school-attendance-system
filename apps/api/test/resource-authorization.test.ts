@@ -104,14 +104,29 @@ describe('autorizacion por recurso: no se evade cambiando un UUID', () => {
       expect((await authorizeGroupResource(t, perm, G_1A, DAY, asg)).allowed, perm).toBe(false);
     }
   });
-  it('trabajo_social y direccion (scope all) acceden a cualquier grupo', async () => {
-    for (const role of ['trabajo_social', 'direccion']) {
-      expect(
-        (await authorizeGroupResource(principal('x', [role]), 'attendance:read', G_2B, DAY, asg))
-          .allowed,
-        role,
-      ).toBe(true);
-    }
+  it('direccion (scope all) accede a la asistencia de cualquier grupo', async () => {
+    expect(
+      (
+        await authorizeGroupResource(
+          principal('x', ['direccion']),
+          'attendance:read',
+          G_2B,
+          DAY,
+          asg,
+        )
+      ).allowed,
+    ).toBe(true);
+  });
+  it('trabajo_social ya NO lee asistencia (retirada por la migracion 0010) pero conserva los justificantes', async () => {
+    const t = principal('x', ['trabajo_social']);
+    for (const perm of ['attendance:read', 'attendance:capture', 'attendance:correct'])
+      expect(await authorizeGroupResource(t, perm, G_2B, DAY, asg), perm).toEqual({
+        allowed: false,
+        reason: 'no_permission',
+      });
+    expect((await authorizeGroupResource(t, 'justifications:read', G_2B, DAY, asg)).allowed).toBe(
+      true,
+    );
   });
   it('un permiso con scope own no autoriza recursos de grupo', async () => {
     const p: Principal = {
