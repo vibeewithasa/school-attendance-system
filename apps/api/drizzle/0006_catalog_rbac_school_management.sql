@@ -9,13 +9,15 @@
 --
 -- Cambios (todos sobre datos de configuracion; no hay usuarios ni sesiones; no se tocan 0000-0005):
 --   1. Permiso nuevo `catalog:manage_school` (dominio school, NO es de autoridad), concedido a `direccion` (alcance all).
---   2. `admin_tecnico` deja de administrar el catalogo escolar (se le quita `catalog:manage`). Conserva `catalog:read`.
---      El permiso `catalog:manage` queda definido y SIN asignar (reservado); retirarlo es una limpieza futura opcional.
---   3. `prefectura`, `trabajo_social` y `control_acceso` pierden `catalog:read` global: su acceso se concedera cuando exista
+--   2. `admin_tecnico` deja de administrar Y de leer el catalogo escolar (se le quitan `catalog:manage` y `catalog:read`): el
+--      catalogo es de la escuela y no necesita permisos tecnicos. Conserva todos sus demas permisos tecnicos. El permiso
+--      `catalog:manage` queda definido y SIN asignar (reservado); su definicion ya aplicada es inmutable.
+--   3. `prefectura`, `trabajo_social` y `control_acceso` pierden `catalog:read` global (catalogo cerrado por defecto): su acceso se concedera cuando exista
 --      el requerimiento funcional (prefectura, con alcance assigned_groups ya aplicado). Hoy no hay datos escolares protegidos.
 -- Las altas y bajas de role_permissions quedan auditadas por el trigger role_permissions_audit (evento
--- role.permissions_changed). Las DELETE llevan la marca de arriba porque el envoltorio protegido las trata como destructivas;
--- son bajas de asignaciones, reversibles con una nueva migracion.
+-- role.permissions_changed): 1 alta + 5 bajas = 6 eventos. La marca de la primera linea se justifica UNICAMENTE por los dos
+-- DELETE FROM role_permissions de abajo (bajas de asignaciones concretas, reversibles con una migracion nueva); la
+-- migracion no contiene DROP, TRUNCATE, ALTER ni borrados de roles, permisos, usuarios o auditoria.
 
 INSERT INTO "permissions" ("key", "description", "domain", "is_authority") VALUES
   ('catalog:manage_school', 'Crear y modificar ciclos escolares y grupos (dominio escolar)', 'school', false)
@@ -30,7 +32,7 @@ ON CONFLICT ("role_id", "permission_id") DO NOTHING;--> statement-breakpoint
 DELETE FROM "role_permissions" rp
 USING "roles" r, "permissions" p
 WHERE rp."role_id" = r."id" AND rp."permission_id" = p."id"
-  AND r."key" = 'admin_tecnico' AND p."key" = 'catalog:manage';--> statement-breakpoint
+  AND r."key" = 'admin_tecnico' AND p."key" IN ('catalog:manage', 'catalog:read');--> statement-breakpoint
 
 DELETE FROM "role_permissions" rp
 USING "roles" r, "permissions" p
@@ -57,7 +59,13 @@ BEGIN
     FROM "role_permissions" rp
     JOIN "roles" r ON r."id" = rp."role_id"
     JOIN "permissions" p ON p."id" = rp."permission_id"
-   WHERE p."key" = 'catalog:read' AND r."key" IN ('direccion', 'admin_tecnico');
-  IF v_n <> 2 THEN RAISE EXCEPTION '0006: direccion y admin_tecnico conservan catalog:read'; END IF;
+   WHERE p."key" LIKE 'catalog:%';
+  IF v_n <> 2 THEN RAISE EXCEPTION '0006: solo direccion debe conservar catalog:read y catalog:manage_school'; END IF;
+  SELECT count(*) INTO v_n
+    FROM "role_permissions" rp
+    JOIN "roles" r ON r."id" = rp."role_id"
+    JOIN "permissions" p ON p."id" = rp."permission_id"
+   WHERE p."key" = 'catalog:read' AND r."key" = 'direccion';
+  IF v_n <> 1 THEN RAISE EXCEPTION '0006: direccion debe conservar catalog:read'; END IF;
 END
 $$;

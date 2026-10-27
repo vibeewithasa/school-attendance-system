@@ -319,7 +319,7 @@ export const ROLES: readonly RoleDef[] = [
     sessionAbsoluteMinutes: 480,
     maxConcurrentSessions: 5,
     grants: [
-      g('catalog:read'),
+      // Sin catalog:read ni catalog:manage (0006): el catalogo escolar no necesita permisos tecnicos.
       g('users:read'),
       g('roles:read'),
       g('users:manage_technical'),

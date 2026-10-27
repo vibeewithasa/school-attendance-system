@@ -12,6 +12,9 @@ import { failure } from './helpers/pglite.js';
 const dir = join(import.meta.dirname, '..', 'drizzle');
 const migrations = readMigrationFiles({ migrationsFolder: dir });
 let db: PGlite;
+let before: string[] = [];
+const allAssignments = async () =>
+  (await matrix('%')).map((x) => `${x.role}|${x.permission}|${x.scope}`).sort();
 
 const matrix = async (like = 'catalog:%') =>
   (
@@ -29,6 +32,8 @@ beforeAll(async () => {
   db = new PGlite();
   expect(migrations).toHaveLength(7);
   for (const m of migrations.slice(0, 6)) for (const stmt of m.sql) await db.exec(stmt);
+  before = await allAssignments();
+  expect(before).toHaveLength(42);
 });
 afterAll(async () => {
   await db.close();
@@ -57,10 +62,9 @@ describe('0006: estado anterior (0000-0005)', () => {
 });
 
 describe('0006: aplicacion incremental', () => {
-  it('se aplica sin errores y deja la politica propuesta', async () => {
+  it('se aplica sin errores y deja la politica propuesta: solo Direccion tiene permisos del catalogo', async () => {
     for (const stmt of migrations[6]!.sql) await db.exec(stmt);
     expect(await matrix()).toEqual([
-      { role: 'admin_tecnico', permission: 'catalog:read', scope: 'all' },
       { role: 'direccion', permission: 'catalog:manage_school', scope: 'all' },
       { role: 'direccion', permission: 'catalog:read', scope: 'all' },
     ]);
@@ -74,11 +78,27 @@ describe('0006: aplicacion incremental', () => {
     ).toHaveLength(1);
   });
 
-  it('no toca nada mas: solo cambian las cinco asignaciones; sin usuarios ni sesiones', async () => {
+  it('diferencia exacta frente a 0000-0005: 1 alta y 5 bajas, nada mas', async () => {
+    const after = await allAssignments();
+    expect(after.filter((x) => !before.includes(x))).toEqual([
+      'direccion|catalog:manage_school|all',
+    ]);
+    expect(before.filter((x) => !after.includes(x)).sort()).toEqual(
+      [
+        'admin_tecnico|catalog:manage|all',
+        'admin_tecnico|catalog:read|all',
+        'control_acceso|catalog:read|all',
+        'prefectura|catalog:read|all',
+        'trabajo_social|catalog:read|all',
+      ].sort(),
+    );
+  });
+
+  it('no toca nada mas: solo cambian las seis asignaciones; sin usuarios ni sesiones', async () => {
     const total = (await db.query<{ n: number }>(`select count(*)::int n from role_permissions`))
       .rows[0]!.n;
-    // semilla 0004 = 42 asignaciones; 0006: -1 (admin_tecnico) -3 (lectura) +1 (direccion) = 39
-    expect(total).toBe(39);
+    // semilla 0004 = 42 asignaciones; 0006: -2 (admin_tecnico: manage y read) -3 (lectura) +1 (direccion) = 38
+    expect(total).toBe(38);
     expect((await db.query(`select 1 from roles`)).rows).toHaveLength(5);
     for (const t of ['users', 'user_roles', 'sessions', 'auth_tokens'])
       expect((await db.query<{ n: number }>(`select count(*)::int n from ${t}`)).rows[0]!.n).toBe(
@@ -98,7 +118,7 @@ describe('0006: aplicacion incremental', () => {
     ).toEqual([]);
   });
 
-  it('deja auditoria de cada cambio de asignacion (1 alta y 4 bajas) y ningun otro evento', async () => {
+  it('deja auditoria de cada cambio de asignacion (1 alta y 5 bajas = 6 eventos) y ningun otro evento', async () => {
     const ev = await db.query<{ details: { role: string; permission: string; change: string } }>(
       `select details from audit_events where event_type = 'role.permissions_changed'`,
     );
@@ -109,19 +129,20 @@ describe('0006: aplicacion incremental', () => {
       [
         'add|direccion|catalog:manage_school',
         'remove|admin_tecnico|catalog:manage',
+        'remove|admin_tecnico|catalog:read',
         'remove|control_acceso|catalog:read',
         'remove|prefectura|catalog:read',
         'remove|trabajo_social|catalog:read',
       ].sort(),
     );
-    expect(await auditCount()).toBe(5);
+    expect(await auditCount()).toBe(6);
   });
 
   it('es idempotente: reaplicarla no cambia asignaciones ni agrega auditoria', async () => {
     const before = JSON.stringify(await matrix('%'));
     for (const stmt of migrations[6]!.sql) await db.exec(stmt);
     expect(JSON.stringify(await matrix('%'))).toBe(before);
-    expect(await auditCount()).toBe(5);
+    expect(await auditCount()).toBe(6);
   });
 
   it('lleva la marca de migracion destructiva (solo bajas de asignaciones) y NO borra roles ni permisos', () => {
@@ -131,6 +152,7 @@ describe('0006: aplicacion incremental', () => {
     expect(stmts).not.toMatch(/\b(DROP|TRUNCATE|ALTER)\b/i);
     expect(stmts).not.toMatch(/DELETE\s+FROM\s+"(roles|permissions|users|sessions|audit_events)"/i);
     expect((stmts.match(/DELETE\s+FROM\s+"role_permissions"/gi) ?? []).length).toBe(2);
+    expect((stmts.match(/\bDELETE\b/gi) ?? []).length).toBe(2); // ningun otro borrado
   });
 });
 

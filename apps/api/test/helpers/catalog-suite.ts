@@ -35,6 +35,8 @@ export function defineCatalogTests(
     let dir: Login;
     let tecnico: Login;
     let pref: Login;
+    let social: Login;
+    let acceso: Login;
     const q = async (sql: string, params: unknown[] = []) =>
       (await kit.harness.owner(sql, params)).rows;
     const auditCount = async (type: string) =>
@@ -54,6 +56,8 @@ export function defineCatalogTests(
       dir = await kit.login(kit.boss);
       tecnico = await kit.login(kit.techBoss);
       pref = await kit.login(await kit.seed({ role: 'prefectura' }));
+      social = await kit.login(await kit.seed({ role: 'trabajo_social' }));
+      acceso = await kit.login(await kit.seed({ role: 'control_acceso' }));
       for (const key of ['past', 'current', 'future'] as const) {
         const r = await q(
           `insert into school_years (name, starts_on, ends_on) values ($1, $2, $3) returning id`,
@@ -83,22 +87,29 @@ export function defineCatalogTests(
         }
       });
 
-      it('politica RBAC: Direccion y admin_tecnico LEEN; una prefectura NO (sin catalog:read global)', async () => {
-        for (const who of [dir, tecnico]) {
-          const list = await kit.call(who, 'GET', '/catalog/school-years');
-          expect(list.statusCode).toBe(200);
-          expect((list.json() as Json).items.length).toBeGreaterThanOrEqual(3);
-          expect((await kit.call(who, 'GET', '/catalog/groups')).statusCode).toBe(200);
-        }
+      it('politica RBAC: solo Direccion lee; tecnico, prefectura, trabajo social y control de acceso reciben 403 (catalogo cerrado)', async () => {
+        const list = await kit.call(dir, 'GET', '/catalog/school-years');
+        expect(list.statusCode).toBe(200);
+        expect((list.json() as Json).items.length).toBeGreaterThanOrEqual(3);
+        expect((await kit.call(dir, 'GET', '/catalog/groups')).statusCode).toBe(200);
+        const others = [pref, tecnico, social, acceso];
         const before = await auditCount('authz.denied');
-        expect((await kit.call(pref, 'GET', '/catalog/school-years')).statusCode).toBe(403);
-        expect((await kit.call(pref, 'GET', '/catalog/groups')).statusCode).toBe(403);
-        expect(await auditCount('authz.denied')).toBeGreaterThanOrEqual(before + 2);
+        for (const who of others) {
+          expect((await kit.call(who, 'GET', '/catalog/school-years')).statusCode).toBe(403);
+          expect((await kit.call(who, 'GET', '/catalog/groups')).statusCode).toBe(403);
+          expect(
+            (await kit.call(who, 'GET', `/catalog/school-years/${ids.current}`)).statusCode,
+          ).toBe(403);
+          expect((await kit.call(who, 'GET', `/catalog/groups/${ids.current}`)).statusCode).toBe(
+            403,
+          );
+        }
+        expect(await auditCount('authz.denied')).toBeGreaterThanOrEqual(before + others.length * 4);
       });
 
-      it('admin_tecnico y prefectura NO administran el catalogo escolar: 403 y queda auditado', async () => {
+      it('admin_tecnico, prefectura, trabajo social y control de acceso NO administran el catalogo escolar: 403 y queda auditado', async () => {
         const before = await auditCount('authz.denied');
-        for (const who of [pref, tecnico]) {
+        for (const who of [pref, tecnico, social, acceso]) {
           expect(
             (
               await writeRoute(who, 'POST', '/catalog/school-years', {
@@ -132,7 +143,7 @@ export function defineCatalogTests(
               .statusCode,
           ).toBe(403);
         }
-        expect(await auditCount('authz.denied')).toBeGreaterThanOrEqual(before + 10);
+        expect(await auditCount('authz.denied')).toBeGreaterThanOrEqual(before + 20);
         expect(Number((await q(`select count(*)::int n from school_years`))[0]!.n)).toBe(3);
       });
 
@@ -141,9 +152,7 @@ export function defineCatalogTests(
         const me = (await kit.call(tecnico, 'GET', '/auth/me')).json() as Json;
         const keys = (me.permissions as Array<{ permission: string }>).map((x) => x.permission);
         expect(keys).toContain('users:manage_technical');
-        expect(keys).toContain('catalog:read');
-        expect(keys).not.toContain('catalog:manage');
-        expect(keys).not.toContain('catalog:manage_school');
+        expect(keys.filter((k) => k.startsWith('catalog:'))).toEqual([]);
         expect(keys.filter((k) => k.startsWith('students:') || k.endsWith('_school'))).toEqual([]);
         // y la cuenta escolar de Direccion SI recibe el permiso nuevo, con alcance all
         const dme = (await kit.call(dir, 'GET', '/auth/me')).json() as Json;
@@ -198,7 +207,6 @@ export function defineCatalogTests(
           `select r.key as role, p.key as permission from role_permissions rp join roles r on r.id = rp.role_id join permissions p on p.id = rp.permission_id where p.key like 'catalog:%' order by 1, 2`,
         );
         expect(matrix).toEqual([
-          { role: 'admin_tecnico', permission: 'catalog:read' },
           { role: 'direccion', permission: 'catalog:manage_school' },
           { role: 'direccion', permission: 'catalog:read' },
         ]);

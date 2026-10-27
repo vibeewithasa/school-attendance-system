@@ -336,12 +336,15 @@ describe('controles por rol (politica del catalogo)', () => {
     expect(screen.getByRole('button', { name: 'Activar ciclo 2026-2027' })).toBeTruthy();
   });
 
-  it('admin_tecnico (solo lee el catalogo) NO ve controles de administracion escolar', async () => {
-    await open(['catalog:read', 'users:read', 'users:manage_technical', 'system:config']);
-    await screen.findByText('2026-2027');
+  it('admin_tecnico (sin permisos del catalogo) no ve el enlace, no llama a la API y la ruta lo explica', async () => {
+    const api = installFakeApi({
+      ...base(['users:read', 'users:manage_technical', 'system:config']),
+    });
+    renderAt('/catalogo');
+    expect((await screen.findByRole('alert')).textContent).toMatch(/No tienes permiso/);
+    expect(screen.queryByRole('link', { name: 'Catálogo escolar' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Nuevo ciclo' })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Editar|Activar|Desactivar/ })).toBeNull();
-    expect(screen.getByText(/puede consultar el catálogo, no modificarlo/)).toBeTruthy();
+    expect(api.count('GET /catalog/school-years')).toBe(0);
   });
 
   it('un permiso ajeno (catalog:manage tecnico reservado) no habilita los controles', async () => {

@@ -118,8 +118,8 @@ describe('semilla en la base (0005) = catalogo en codigo', () => {
     const audit = await db.query<{ event_type: string; actor_user_id: string | null }>(
       `select event_type, actor_user_id from audit_events`,
     );
-    // 0006 (politica del catalogo): 1 alta (direccion) + 4 bajas (admin_tecnico y 3 roles escolares), sin actor (migracion)
-    expect(audit.rows).toHaveLength(5);
+    // 0006 (politica del catalogo): 1 alta (direccion) + 5 bajas (2 de admin_tecnico y 3 roles escolares), sin actor (migracion)
+    expect(audit.rows).toHaveLength(6);
     expect(
       audit.rows.every(
         (x) => x.event_type === 'role.permissions_changed' && x.actor_user_id === null,
