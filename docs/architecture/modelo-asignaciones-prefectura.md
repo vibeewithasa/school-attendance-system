@@ -1,7 +1,6 @@
 # Asignaciones de grupos a prefectura y alcance `assigned_groups`
 
-Estado: **implementado y validado SOLO en entornos aislados** (rama `feat/prefect-group-assignments`, sin commit). La migración **0009** y la propuesta de privilegios **0004**
-**NO están aplicadas en `eta15_dev`** (sigue con 9 migraciones, 13 tablas, sin cuentas ni asignaciones). Política RBAC y reglas son **técnicas del MVP, pendientes de ratificación institucional**.
+Estado: **implementado y APLICADO en `eta15_dev` el 2026-10-27, sin ningún dato** (migración **0009** y privilegios **0004**; 10 migraciones, 14 tablas, sin cuentas ni asignaciones). Política RBAC y reglas son **técnicas del MVP, pendientes de ratificación institucional**.
 
 ## Requisitos de la escuela y política técnica provisional
 
@@ -86,7 +85,7 @@ el puerto devuelve el conjunto **vacío** (SAVEPOINT, sin abortar la transacció
 
 **Por qué en la misma migración**: la baja de `students:read` a prefectura y el alta de los permisos nuevos son datos de configuración del mismo cambio funcional y deben aplicarse juntos con la tabla (la API ya no
 concede el expediente a prefectura en el código). Marca `-- eta15:allow-destructive` justificada solo por ese `DELETE` de una asignación concreta (reversible con una migración nueva); verificación final que revierte todo si
-la matriz no es la esperada. Resultado esperado al aplicarla: 29 permisos, 37 asignaciones, 13 eventos de auditoría. Los permisos **no son de autoridad** (no delegan acceso a cuentas ni roles); `admin_tecnico` no puede recibirlos (FK de dominio).
+la matriz no es la esperada. Resultado en `eta15_dev` (comprobado antes con una migración de prueba 0008 → 0009): 29 permisos, 37 asignaciones, 13 eventos de auditoría. Los permisos **no son de autoridad** (no delegan acceso a cuentas ni roles); `admin_tecnico` no puede recibirlos (FK de dominio).
 La API **no** escribe `role_permissions`.
 
 ## API (`/school`, sesión + MFA gate; mutaciones con CSRF y Origin; sin `DELETE`)
@@ -113,7 +112,7 @@ Sin la tabla o los privilegios 0004 la administración responde `503 PREFECT_ASS
 - **Revocación**: en línea es **inmediata** (la siguiente petición falla). Un dispositivo **sin conexión no recibe el aviso hasta que se reconecte**; por eso la concesión offline futura deberá tener vigencia corta y
   revalidarse contra la asignación vigente de cada grupo y fecha al sincronizar (decisión del módulo de asistencia, no definida aquí). No hay tokens offline, concesiones firmadas ni sincronización.
 
-## Privilegios PostgreSQL (propuesta 0004, no aplicada)
+## Privilegios PostgreSQL (0004, aplicados el 2026-10-27)
 
 `tools/db/privileges/0004-prefect-assignments-write.{proposal,apply,verify}.sql`: **todo por columna**: `SELECT` (todas salvo `updated_at`), `INSERT (user_id, school_year_id, group_id, starts_on, ends_on, created_by)`,
 `UPDATE (ends_on, revoked_by, revocation_reason)` (3 `GRANT`). Nunca `DELETE`, `TRUNCATE`, `TRIGGER`, `REFERENCES`, `CREATE`, `GRANT OPTION` ni escritura sobre `role_permissions`. Los triggers de la 0009 son `SECURITY INVOKER`: leen
@@ -129,7 +128,7 @@ Validación previa, foco al primer campo inválido, responsive (la navegación a
 
 ## Pruebas (2026-10-27)
 
-Recuento: 864 unitarias (738 API + 126 React), 34 de integración (base real, solo lectura) y 359 en el clúster desechable.
+Recuento al aplicarlo: 867 unitarias (740 API + 127 React), 36 de integración (base real, solo lectura; incluyen las columnas exactas de 0004 y la matriz RBAC) y 361 en el clúster desechable.
 
 PGlite: migración 0009 (20 casos), servicio con «hoy» inyectado, HTTP completo (29, con dos prefectas ficticias y acceso horizontal) y la política RBAC; clúster PostgreSQL 18 desechable con los privilegios reales de `eta15_api`
 (47 casos con matriz por columna, privilegios de más y de menos, y **concurrencia real**: altas simultáneas del mismo par, cobertura sin bloqueo, revocar rol vs asignar en ambos órdenes, cerrar vs revocar, desactivar grupo vs asignar,
@@ -145,3 +144,21 @@ cada prefecta ve solo sus alumnos y nada más (404/403), y **revocar 1.º B a un
 5. Vigencia y revalidación de las concesiones offline de Android (tiempo máximo sin conexión, qué pasa con capturas hechas tras una revocación).
 6. Si la prefecta debe ver el código escolar del alumno (hoy no).
 7. Auditoría de cambios hechos directamente por la consola del propietario (hoy no hay trigger).
+
+## Aplicación en `eta15_dev` y cómo reproducirla en otro entorno (2026-10-27)
+
+Orden y comprobaciones (cada paso con autorización explícita; sin cuentas, alumnos ni asignaciones, ni siquiera ficticias, en la base real):
+
+1. Preflight de solo lectura con `pnpm db:state` (9 migraciones, 13 tablas, 27 permisos, 35 asignaciones, 9 eventos, `btree_gist` instalada, sin _drift_) y SHA-256 del SQL exacto (0009 `415CA97A…E581A`, apply 0004 `EC90CDA5…FBD213`; el comando imprime además los de verify y proposal).
+2. Respaldo `pg_dump -Fc` fuera del repositorio (`C:UsersasaheBackupsETA15eta15_dev_pre-0009-0004_20261027-015630.dump`, 118 362 bytes, 260 entradas, SHA-256 `8D54EC0650C15B560EB1EF1381270FF2CCDA788068ACB50939DB124AF4C2D171`), `pg_restore --list` correcto y resumen no sensible (`…summary.txt`).
+3. `pnpm db:migrate` (envoltorio protegido, exige `apps/api/drizzle` confirmado en Git): solo 0009 → 10 migraciones, 14 tablas, 29 permisos, 37 asignaciones, 13 eventos de auditoría sin actor; constraint `pga_no_overlap` y los 5 triggers de la tabla y el de `school_years`; las 4 funciones nuevas son `SECURITY INVOKER`, con `search_path` fijo, sin EXECUTE para PUBLIC ni para `eta15_api`; la tabla no tiene ACL (nadie hereda privilegios).
+4. `pnpm db:apply-privileges 0004-prefect-assignments-write --sha256=<hash>` (ensayo con `ROLLBACK`) y luego `--execute`: preflight + 3 `GRANT` + verificador en una transacción.
+5. Verificación como `eta15_api` dentro de `BEGIN … ROLLBACK`: `DELETE`, `TRUNCATE`, `CREATE TABLE`, `CREATE TRIGGER`, `REFERENCES`, `SET ROLE eta15_app`, `ALTER … OWNER TO`, escritura de `role_permissions`, `SELECT *` / `updated_at`, y escribir columnas no concedidas (`id`, `revoked_at`, `user_id`, `starts_on`): todo `42501`; el `INSERT` por columnas concedidas llega al trigger `SECURITY INVOKER` (que lee `users` bajo `eta15_api`) y falla por regla (`23514`), no por privilegio; `UPDATE` de `ends_on`, `revoked_by` y `revocation_reason` permitido. Como `eta15_dev` no tiene cuentas (bootstrap escolar bloqueado), el comportamiento con filas reales bajo `eta15_api` se prueba en el clúster desechable con los mismos privilegios (`pnpm test:pg-temp`).
+
+Para reproducirlo en otro entorno: PostgreSQL 18 con 0000–0008 aplicadas, los privilegios 0002 y 0003 y los roles `eta15_app` (propietario) y `eta15_api`; luego los pasos 1–4 con las credenciales de ese entorno (nunca pegadas en comandos ni commits). Mientras 0004 no esté aplicada, cambiar las fechas de un ciclo falla (503 del catálogo) porque el trigger lee estas asignaciones con los privilegios de la API.
+
+**Restauración** (solo con autorización explícita; destruye lo posterior al respaldo): detener la API, `pg_restore --list` del `.dump`, restaurar como `eta15_app`, comprobar con `pnpm db:state` y recordar que `pg_dump` no respalda roles ni sus contraseñas. Como 0009 solo agrega objetos, cambia 4 asignaciones de permisos y suma 2 permisos, una migración correctiva (que recree la matriz anterior) es más segura que restaurar.
+
+### Cierre de la auditoría posterior a la implementación
+
+Se corrigieron dos defectos concretos antes de aplicar: (1) en la interfaz, una asignación de varios grupos con resultado **parcial** no refrescaba la lista ni nombraba lo asignado; ahora dice «Resultado parcial», lista «Asignados correctamente» y los fallidos con su motivo, conserva lo creado (no es todo-o-nada), quita lo ya asignado de la selección para que el reintento no duplique y suma el total acumulado al final; (2) el preflight de 0004 no comprobaba la dependencia con **0003** (el trigger de fechas de 0007 lee matrículas): ahora lo exige. Además se probaron con migraciones de prueba los conteos 27 → 29 permisos, 35 → 37 asignaciones y 9 → 13 eventos, y la integridad del catálogo (no se acortan fechas de un ciclo dejando asignaciones, ni siquiera revocadas, fuera) por HTTP.

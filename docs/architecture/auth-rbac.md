@@ -357,7 +357,7 @@ La excepción es **solo de desarrollo local con datos sintéticos**. Antes de us
 | `users:disable_any` · `users:revoke_sessions_any` (solo reducen acceso)           |     —      |       —        |       —        |     —     |       ✓       |
 | `audit:read` · `system:config`                                                    |     —      |       —        |       —        |     —     |       ✓       |
 
-(¹ᵖ) Migración **0009** (rama `feat/prefect-group-assignments`, **no aplicada** en `eta15_dev`): prefectura pierde `students:read` (solo necesita el dato básico con alcance `assigned_groups`) y gana `prefect_assignments:read` con alcance `own`; Dirección gana `prefect_assignments:manage|read`. Las columnas de `trabajo_social` y `control_acceso` muestran la semilla original (0008 retiró su lectura global de alumnos). Ver [modelo-asignaciones-prefectura.md](modelo-asignaciones-prefectura.md).
+(¹ᵖ) Migración **0009** (**aplicada** en `eta15_dev` el 2026-10-27): prefectura pierde `students:read` (solo necesita el dato básico con alcance `assigned_groups`) y gana `prefect_assignments:read` con alcance `own`; Dirección gana `prefect_assignments:manage|read`. Las columnas de `trabajo_social` y `control_acceso` muestran la semilla original (0008 retiró su lectura global de alumnos). Ver [modelo-asignaciones-prefectura.md](modelo-asignaciones-prefectura.md).
 
 (*) Supuestos de Dirección a confirmar. Los roles no son un conjunto cerrado: se agregan filas; los permisos de autoridad solo por migración.
 

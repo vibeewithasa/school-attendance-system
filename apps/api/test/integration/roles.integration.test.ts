@@ -153,7 +153,7 @@ describe('comprobaciones POSITIVAS como eta15_api', () => {
     const r = await api.query<{ roles: number; permisos: number }>(
       `select (select count(*)::int from roles) as roles, (select count(*)::int from permissions) as permisos`,
     );
-    expect(r.rows[0]).toEqual({ roles: 5, permisos: 27 }); // 26 de 0004 + catalog:manage_school (0006)
+    expect(r.rows[0]).toEqual({ roles: 5, permisos: 29 }); // 26 de 0004 + catalog:manage_school (0006) + 2 de asignaciones de prefectura (0009)
   });
   it('puede ejecutar los tres ayudantes autorizados', async () => {
     const r = await api.query<Record<string, unknown>>(
@@ -318,6 +318,8 @@ describe('privilegios EFECTIVOS (catalogo, sin ejecutar DDL destructivo)', () =>
     students: [false, true, true, false], // SELECT solo por columna
     enrollments: [false, true, true, false],
     student_group_assignments: [false, true, true, false],
+    // asignaciones de prefectura (0009 + propuesta 0004 aplicada el 2026-10-27): por columna; jamas DELETE
+    prefect_group_assignments: [false, true, true, false],
   };
   it('matriz exacta de SELECT/INSERT/UPDATE/DELETE por tabla', async () => {
     for (const [table, [s, i, u, d]] of Object.entries(matrix)) {
@@ -385,13 +387,47 @@ describe('privilegios EFECTIVOS (catalogo, sin ejecutar DDL destructivo)', () =>
       { t: 'students', p: 'UPDATE', cols: 'family_name,given_names,is_active,school_code' },
     ]);
   });
+  it('asignaciones de prefectura: SELECT, INSERT y UPDATE exactamente por las columnas aprobadas, sin privilegio de tabla ni GRANT OPTION (0004)', async () => {
+    for (const p of ['SELECT', 'INSERT', 'UPDATE'])
+      expect(await priv('prefect_group_assignments', p), `${p} de tabla`).toBe(false);
+    const r = await owner.query<{ p: string; cols: string }>(
+      `select privilege_type p, string_agg(column_name, ',' order by column_name) cols
+         from information_schema.column_privileges
+        where grantee = 'eta15_api' and table_name = 'prefect_group_assignments'
+          and privilege_type in ('SELECT','INSERT','UPDATE') and is_grantable = 'NO'
+        group by 1 order by 1`,
+    );
+    expect(r.rows).toEqual([
+      { p: 'INSERT', cols: 'created_by,ends_on,group_id,school_year_id,starts_on,user_id' },
+      {
+        p: 'SELECT',
+        cols: 'created_at,created_by,ends_on,group_id,id,revocation_reason,revoked_at,revoked_by,school_year_id,starts_on,user_id',
+      },
+      { p: 'UPDATE', cols: 'ends_on,revocation_reason,revoked_by' },
+    ]);
+  });
+  it('permisos de asignaciones de prefectura: escolares, no de autoridad, solo Direccion (all) y prefectura (own, lectura)', async () => {
+    const r = await owner.query<{ k: string; d: string; a: boolean }>(
+      `select r.key || '|' || p.key || '|' || rp.scope as k, p.domain d, p.is_authority a from role_permissions rp
+         join roles r on r.id = rp.role_id join permissions p on p.id = rp.permission_id
+        where p.key like 'prefect_assignments:%' order by 1`,
+    );
+    expect(r.rows.map((x) => x.k).sort()).toEqual(
+      [
+        'direccion|prefect_assignments:manage|all',
+        'direccion|prefect_assignments:read|all',
+        'prefectura|prefect_assignments:read|own',
+      ].sort(),
+    );
+    expect(r.rows.every((x) => x.d === 'school' && x.a === false)).toBe(true);
+  });
   it('el esquema extensions (btree_gist) no es accesible para la API', async () => {
     const r = await owner.query<{ u: boolean; c: boolean }>(
       `select has_schema_privilege('eta15_api','extensions','USAGE') as u, has_schema_privilege('eta15_api','extensions','CREATE') as c`,
     );
     expect(r.rows[0]).toEqual({ u: false, c: false });
   });
-  it('politica RBAC de alumnos aplicada (0008): solo Direccion (all) y prefectura (assigned_groups); sin lectura global de trabajo social ni control de acceso', async () => {
+  it('politica RBAC de alumnos aplicada (0008, 0009): solo Direccion (all) y prefectura (assigned_groups, sin expediente); sin lectura global de trabajo social ni control de acceso', async () => {
     const r = await owner.query<{ k: string }>(
       `select r.key || '|' || p.key || '|' || rp.scope as k from role_permissions rp
          join roles r on r.id = rp.role_id join permissions p on p.id = rp.permission_id
@@ -403,8 +439,7 @@ describe('privilegios EFECTIVOS (catalogo, sin ejecutar DDL destructivo)', () =>
         'direccion|students:manage|all',
         'direccion|students:read|all',
         'direccion|students:read_basic|all',
-        'prefectura|students:read|assigned_groups',
-        'prefectura|students:read_basic|assigned_groups',
+        'prefectura|students:read_basic|assigned_groups', // 0009: sin students:read (expediente)
       ].sort(),
     );
   });
