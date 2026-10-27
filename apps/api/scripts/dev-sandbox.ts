@@ -24,7 +24,9 @@ async function main(): Promise<void> {
   const catalogWrite = process.argv.includes('--catalog-write');
   // --students-write aplica la propuesta 0003 (alumnos, matriculas, historial de grupo), tambien solo en este clúster.
   const studentsWrite = process.argv.includes('--students-write');
-  const cluster = await startApiCluster(10, { catalogWrite, studentsWrite });
+  // --prefect-write aplica la propuesta 0004 (asignaciones de grupos a prefectura), tambien solo en este clúster.
+  const prefectWrite = process.argv.includes('--prefect-write');
+  const cluster = await startApiCluster(10, { catalogWrite, studentsWrite, prefectWrite });
   // Aislamiento: el clúster desechable usa un puerto propio; jamas el del servicio de PostgreSQL de Windows (5432).
   if (cluster.pgt.port === 5432) {
     await cluster.stop();
@@ -84,22 +86,24 @@ async function main(): Promise<void> {
     contrasena: direccion2Pw,
   });
 
-  const prefPw = newPassword();
-  const pref = await cluster.owner.query<{ id: string }>(
-    `INSERT INTO users (email, display_name, account_domain, status, password_hash)
-     VALUES ('prefectura.ficticia@escuela.test', 'Prefectura ficticia', 'school', 'active', $1) RETURNING id`,
-    [await passwords.hash(prefPw)],
-  );
-  await cluster.owner.query(
-    `INSERT INTO user_roles (user_id, role_id, domain, granted_by, grant_source)
-     SELECT $1, r.id, r.domain, d.id, 'grant' FROM roles r, users d WHERE r.key = 'prefectura' AND d.email = 'direccion.ficticia@escuela.test'`,
-    [pref.rows[0]!.id],
-  );
-  accounts.push({
-    rol: 'prefectura',
-    correo: 'prefectura.ficticia@escuela.test',
-    contrasena: prefPw,
-  });
+  // Dos prefectas ficticias para probar el alcance por grupo y la cobertura compartida (las asignaciones las crea Direccion).
+  for (const [correo, nombre] of [
+    ['prefectura.ficticia@escuela.test', 'Prefectura ficticia'],
+    ['prefectura.dos.ficticia@escuela.test', 'Prefectura dos ficticia'],
+  ] as const) {
+    const prefPw = newPassword();
+    const pref = await cluster.owner.query<{ id: string }>(
+      `INSERT INTO users (email, display_name, account_domain, status, password_hash)
+       VALUES ($1, $2, 'school', 'active', $3) RETURNING id`,
+      [correo, nombre, await passwords.hash(prefPw)],
+    );
+    await cluster.owner.query(
+      `INSERT INTO user_roles (user_id, role_id, domain, granted_by, grant_source)
+       SELECT $1, r.id, r.domain, d.id, 'grant' FROM roles r, users d WHERE r.key = 'prefectura' AND d.email = 'direccion.ficticia@escuela.test'`,
+      [pref.rows[0]!.id],
+    );
+    accounts.push({ rol: 'prefectura', correo, contrasena: prefPw });
+  }
 
   const env = loadEnv({
     NODE_ENV: 'development',

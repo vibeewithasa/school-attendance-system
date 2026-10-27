@@ -19,7 +19,11 @@ afterAll(async () => {
 function suite(label: string, mode: 'full' | 'unavailable') {
   let cluster: ApiCluster;
   beforeAll(async () => {
-    cluster = await startApiCluster(20, { catalogWrite: true, studentsWrite: mode === 'full' });
+    cluster = await startApiCluster(20, {
+      catalogWrite: true,
+      studentsWrite: mode === 'full',
+      prefectWrite: true, // los triggers de fechas del ciclo (0009) leen las asignaciones de prefectura
+    });
     clusters.push(cluster);
   }, 240_000);
 

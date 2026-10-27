@@ -27,6 +27,7 @@ export interface PermissionDef {
 const ALL = ['all'] as const;
 const ALL_OR_GROUPS = ['all', 'assigned_groups'] as const;
 const GROUPS = ['assigned_groups'] as const;
+const ALL_OR_OWN = ['all', 'own'] as const;
 
 const RAW_PERMISSIONS: readonly PermissionDef[] = [
   // Compartidos
@@ -148,6 +149,18 @@ const RAW_PERMISSIONS: readonly PermissionDef[] = [
     scopes: ALL,
   },
   {
+    key: 'prefect_assignments:manage',
+    domain: 'school',
+    description: 'Asignar, cerrar y revocar grupos de prefectura (dominio escolar)',
+    scopes: ALL,
+  },
+  {
+    key: 'prefect_assignments:read',
+    domain: 'school',
+    description: 'Consultar asignaciones de grupos a prefectura (propias o todas)',
+    scopes: ALL_OR_OWN,
+  },
+  {
     key: 'attendance:capture',
     domain: 'school',
     description: 'Capturar la lista diaria de asistencia',
@@ -245,8 +258,9 @@ export const ROLES: readonly RoleDef[] = [
     maxConcurrentSessions: 5,
     grants: [
       // Sin catalog:read global (0006): se concedera cuando exista el requerimiento, con alcance assigned_groups ya aplicado.
+      // Sin students:read (0009): para pasar lista basta el dato basico; el expediente es de Direccion.
       g('students:read_basic', 'assigned_groups'),
-      g('students:read', 'assigned_groups'),
+      g('prefect_assignments:read', 'own'),
       g('attendance:capture', 'assigned_groups'),
       g('attendance:read', 'assigned_groups'),
       g('justifications:read', 'assigned_groups'),
@@ -302,6 +316,8 @@ export const ROLES: readonly RoleDef[] = [
       g('students:read'),
       g('students:manage'),
       g('enrollments:manage'),
+      g('prefect_assignments:manage'),
+      g('prefect_assignments:read'),
       g('attendance:read'),
       g('attendance:correct'),
       g('justifications:read'),

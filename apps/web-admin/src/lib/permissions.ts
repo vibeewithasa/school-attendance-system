@@ -42,6 +42,9 @@ export function permissionsOf(me: AuthMeResponse) {
     canViewStudentFile: has.has('students:read'),
     canManageStudents: hasAll('students:manage'),
     canManageEnrollments: hasAll('enrollments:manage'),
+    /** Asignaciones de grupos a prefectura: solo con alcance `all` (la prefectura solo consulta las suyas, por Android). */
+    canViewPrefectAssignments: hasAll('prefect_assignments:read'),
+    canManagePrefectAssignments: hasAll('prefect_assignments:manage'),
     canCreate: (domain: Domain) => has.has(`users:manage_${domain}`),
     canGrant: (domain: Domain) => has.has(`roles:grant_${domain}`),
     canDisable: (domain: Domain) =>

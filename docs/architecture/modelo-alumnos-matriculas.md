@@ -80,7 +80,7 @@ El módulo usa los permisos que ya existen (no se inventan): `students:read_basi
 
 - **Denegar por defecto**; sin permiso `403` + `authz.denied`. El alcance se aplica **en la consulta** (listados, contadores, búsquedas, filtros y paginación); un conjunto vacío significa **cero filas**,
   nunca "sin filtro". Un recurso fuera de alcance responde **igual que uno inexistente (`404`)**. No hay datos por relaciones SQL sin autorizar.
-- **Prefectura** conserva `assigned_groups` pero **no existen asignaciones reales de grupos a prefectura**: hoy no ve nada. **No se implementó** esa tabla (fase posterior).
+- **Prefectura** conserva `students:read_basic` con `assigned_groups`. Las asignaciones reales de grupos a prefectura (migración 0009, **no aplicada** todavía en `eta15_dev`; ver [modelo-asignaciones-prefectura.md](modelo-asignaciones-prefectura.md)) resuelven ese alcance; mientras no existan ve cero filas. Con 0009 pierde `students:read` (expediente): el código escolar pasa a ser del expediente (`students:read`) y la búsqueda por código también; la prefectura recibe solo nombre, estado y grupo vigente, y los filtros por ciclo y fecha pasada se rechazan con alcance limitado (`FILTER_NOT_ALLOWED`).
 - **admin_tecnico** no puede recibir permisos de alumnos: lo impide el esquema (dominio). **Dirección** tiene los cuatro.
 - **Brecha de la semilla y migración 0008 (aplicada)**: la semilla 0004 dio lectura de alumnos con alcance `all` a `trabajo_social` (`students:read_basic`, `students:read`) y a `control_acceso`
   (`students:read_basic`). Con esos permisos, esos roles verían a todos los alumnos. La migración `0008_students_rbac_policy` (marca `-- eta15:allow-destructive` justificada solo por sus dos `DELETE` de

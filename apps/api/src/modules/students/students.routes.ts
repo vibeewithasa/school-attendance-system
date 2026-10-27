@@ -161,6 +161,14 @@ export function studentsRoutes(app: FastifyInstance, options: StudentsRoutesOpti
     return send(request, reply, await service.withdraw(context(request), p.data.id, body.data));
   });
 
+  // ------------------------------------------------------------------------------------------- lista de grupo (Android)
+  app.get('/groups/:id/roster', read, async (request, reply) => {
+    const p = idParams.safeParse(request.params);
+    if (!p.success || Object.keys((request.query as object) ?? {}).length > 0)
+      return invalid(request, reply);
+    return send(request, reply, await service.getGroupRoster(context(request), p.data.id));
+  });
+
   // ------------------------------------------------------------------------------------------- grupos
   app.post(
     '/enrollments/:id/group-assignments',

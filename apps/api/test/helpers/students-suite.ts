@@ -184,7 +184,8 @@ export function defineStudentsTests(
         expect(
           (await get(pref, `/school/students/00000000-0000-4000-8000-0000000000aa`)).statusCode,
         ).toBe(404);
-        expect((await get(pref, `/school/students/${s.id}/enrollments`)).statusCode).toBe(404);
+        // sin students:read (0009) la prefectura no tiene expediente: 403 por permiso, no por alcance
+        expect((await get(pref, `/school/students/${s.id}/enrollments`)).statusCode).toBe(403);
         expect(
           (await post(pref, '/school/students', { givenNames: 'X', familyName: 'Y' })).statusCode,
         ).toBe(403);
@@ -885,7 +886,7 @@ export function defineStudentsTests(
         const yearUrl = `/catalog/school-years/${year}`;
         const shrinkStart = await patch(dir, yearUrl, { startsOn: addDays(start, 10) });
         expect(shrinkStart.statusCode, shrinkStart.body).toBe(409);
-        expect(body(shrinkStart).error.message).toMatch(/matrículas o periodos de grupo/);
+        expect(body(shrinkStart).error.message).toMatch(/matrículas, periodos de grupo/);
         expect(
           (await q(`select starts_on::text d from school_years where id = $1`, [year]))[0]!.d,
         ).toBe(start);

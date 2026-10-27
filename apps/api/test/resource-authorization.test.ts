@@ -200,12 +200,16 @@ describe('autorizacion por campo sensible', () => {
     expect(projectFields(student, spec, principal('c', ['control_acceso']))).toEqual({});
     expect(projectFields(student, spec, principal('t', ['trabajo_social']))).toEqual({});
   });
-  it('direccion y prefectura (con el expediente) ven los campos protegidos; el alcance lo aplica la consulta', () => {
+  it('direccion ve los campos protegidos y la prefectura solo el dato basico; el alcance lo aplica la consulta', () => {
     expect(Object.keys(projectFields(student, spec, principal('d', ['direccion'])))).toContain(
       'curp',
     );
-    expect(Object.keys(projectFields(student, spec, principal('p', ['prefectura'])))).toContain(
+    // Prefectura (0009) ya no tiene el expediente: solo el dato basico.
+    expect(Object.keys(projectFields(student, spec, principal('p', ['prefectura'])))).not.toContain(
       'medicalNotes',
+    );
+    expect(Object.keys(projectFields(student, spec, principal('p', ['prefectura'])))).toContain(
+      'fullName',
     );
   });
   it('admin_tecnico no ve ningun campo; un campo sin regla nunca se devuelve', () => {

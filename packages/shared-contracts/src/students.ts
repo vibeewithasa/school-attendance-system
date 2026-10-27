@@ -129,7 +129,8 @@ export interface StudentDto {
   id: string;
   givenNames: string;
   familyName: string;
-  schoolCode: string | null;
+  /** Solo con `students:read` (la prefectura, con `students:read_basic`, no lo recibe ni puede buscar por el). */
+  schoolCode?: string | null;
   isActive: boolean;
   /** Grupo vigente HOY (hora de la escuela) segun la asignacion vigente; null si no tiene. */
   currentGroup: GroupRefDto | null;

@@ -121,7 +121,9 @@ export function StudentDetail({
             {fullName(student)}
           </h2>
           <p className="text-sm text-slate-700">
-            {student.schoolCode ? `Código ${student.schoolCode}` : 'Sin código escolar'} ·{' '}
+            {student.schoolCode === undefined
+              ? ''
+              : `${student.schoolCode ? `Código ${student.schoolCode}` : 'Sin código escolar'} · `}
             {student.currentGroup ? groupLabel(student.currentGroup) : 'Sin grupo vigente'}
           </p>
           <span

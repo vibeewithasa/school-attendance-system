@@ -28,7 +28,10 @@ const g = (permission: string, scope: Grant['scope'] = 'all'): Grant => ({ permi
 const ctx = (...grants: Grant[]): StudentsContext => ({ actorId: ACTOR, grants });
 const portFor = (groupIds: string[]): GroupAssignments => ({ groupIdsFor: async () => groupIds });
 const svc = (assignments?: GroupAssignments) =>
-  createStudentsService({ store: pgliteStore(db, 'api_runtime'), assignments });
+  createStudentsService({
+    store: pgliteStore(db, 'api_runtime'),
+    assignments: () => assignments ?? portFor([]),
+  });
 const one = async <T>(sql: string, p: unknown[] = []) => (await db.query<T>(sql, p)).rows[0]!;
 
 beforeAll(async () => {
@@ -122,7 +125,7 @@ describe('denegar por defecto', () => {
 });
 
 describe('proyeccion por campos', () => {
-  it('students:read_basic devuelve nombre, codigo, estado y grupo vigente; sin sellos de tiempo', async () => {
+  it('students:read_basic devuelve nombre, estado y grupo vigente; sin codigo escolar ni sellos de tiempo', async () => {
     const r = await svc().getStudent(ctx(g('students:read_basic')), ids.s1!);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -132,7 +135,6 @@ describe('proyeccion por campos', () => {
       'givenNames',
       'id',
       'isActive',
-      'schoolCode',
     ]);
     expect(r.value.currentGroup).toMatchObject({ id: ids.A, code: 'A' });
   });
@@ -259,7 +261,10 @@ describe('modulo no habilitado en la base', () => {
     for (const m of readMigrationFiles({ migrationsFolder: dir }).slice(0, 7))
       for (const stmt of m.sql) await old.exec(stmt);
     await createApiRole(old);
-    const s = createStudentsService({ store: pgliteStore(old, 'api_runtime') });
+    const s = createStudentsService({
+      store: pgliteStore(old, 'api_runtime'),
+      assignments: () => portFor([]),
+    });
     const c = ctx(g('students:read_basic'), g('students:manage'), g('enrollments:manage'));
     expect(await s.listStudents(c, { page: 1, pageSize: 20 })).toMatchObject({
       ok: false,

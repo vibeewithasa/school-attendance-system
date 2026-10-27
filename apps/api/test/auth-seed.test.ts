@@ -101,7 +101,15 @@ describe('semilla en la base (0005) = catalogo en codigo', () => {
          join permissions p on p.id=rp.permission_id where r.key='prefectura' and p.domain='school'`,
     );
     expect(r.rows.length).toBeGreaterThan(0);
-    expect(r.rows.every((x) => x.scope === 'assigned_groups')).toBe(true);
+    // Alumnos y asistencia: solo de sus grupos asignados; sus propias asignaciones: alcance own (0009).
+    expect(
+      r.rows.every((x) =>
+        x.permission === 'prefect_assignments:read'
+          ? x.scope === 'own'
+          : x.scope === 'assigned_groups',
+      ),
+    ).toBe(true);
+    expect(r.rows.map((x) => x.permission)).not.toContain('students:read');
   });
   it('en la base, admin_tecnico no recibe permisos escolares', async () => {
     const r = await db.query<{ n: number }>(
@@ -110,7 +118,7 @@ describe('semilla en la base (0005) = catalogo en codigo', () => {
     );
     expect(r.rows[0]!.n).toBe(0);
   });
-  it('NO siembra usuarios, sesiones ni tokens; la unica auditoria es la de las altas/bajas de 0006 y 0008', async () => {
+  it('NO siembra usuarios, sesiones ni tokens; la unica auditoria es la de las altas/bajas de 0006, 0008 y 0009', async () => {
     for (const t of ['users', 'user_roles', 'sessions', 'auth_tokens']) {
       const r = await db.query<{ n: number }>(`select count(*)::int n from ${t}`);
       expect(r.rows[0]!.n, t).toBe(0);
@@ -119,15 +127,16 @@ describe('semilla en la base (0005) = catalogo en codigo', () => {
       `select event_type, actor_user_id from audit_events`,
     );
     // 0006 (politica del catalogo): 1 alta (direccion) + 5 bajas (2 de admin_tecnico y 3 roles escolares); 0008 (alumnos): 3 bajas;
+    // 0009 (prefectura): 3 altas (2 de direccion, 1 de prefectura) + 1 baja (students:read de prefectura);
     // todas sin actor (migracion)
-    expect(audit.rows).toHaveLength(9);
+    expect(audit.rows).toHaveLength(13);
     expect(
       audit.rows.every(
         (x) => x.event_type === 'role.permissions_changed' && x.actor_user_id === null,
       ),
     ).toBe(true);
   });
-  it('la cadena de semilla (0004 + 0006 + 0008) es idempotente: reaplicarla no cambia nada', async () => {
+  it('la cadena de semilla (0004 + 0006 + 0008 + 0009) es idempotente: reaplicarla no cambia nada', async () => {
     const count = () =>
       db.query<{ n: number }>(
         `select (select count(*) from permissions)::int + (select count(*) from roles)::int + (select count(*) from role_permissions)::int n`,
@@ -137,9 +146,15 @@ describe('semilla en la base (0005) = catalogo en codigo', () => {
       '0004_auth_seed_roles_permissions.sql',
       '0006_catalog_rbac_school_management.sql',
       '0008_students_rbac_policy.sql',
+      '0009_prefect_group_assignments.sql',
     ]) {
       const sql = readFileSync(join(import.meta.dirname, '..', 'drizzle', file), 'utf8');
-      for (const stmt of sql.split('--> statement-breakpoint')) await db.exec(stmt);
+      // 0009 mezcla DDL (no repetible) y la parte RBAC (idempotente): solo se repite la ultima.
+      const statements = sql.split('--> statement-breakpoint');
+      const from = file.startsWith('0009')
+        ? statements.findIndex((x) => x.includes('INSERT INTO "permissions"'))
+        : 0;
+      for (const stmt of statements.slice(from)) await db.exec(stmt);
     }
     const after = await count();
     expect(after.rows[0]!.n).toBe(before.rows[0]!.n);

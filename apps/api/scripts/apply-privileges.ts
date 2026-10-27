@@ -12,7 +12,11 @@ import { checkOwnerConnection, readEnvFile, safeError } from './db-identity.js';
  * Solo admite la lista blanca de abajo; exige 127.0.0.1:5432 / eta15_dev / eta15_app; ejecuta preflight + GRANT + verificador en
  * una sola transaccion. Nunca imprime contrasenas ni cadenas de conexion.
  */
-const ALLOWED = ['0002-school-catalog-write', '0003-students-write'] as const;
+const ALLOWED = [
+  '0002-school-catalog-write',
+  '0003-students-write',
+  '0004-prefect-assignments-write',
+] as const;
 const DIR = join(API_DIR, '..', '..', 'tools', 'db', 'privileges');
 
 async function main(): Promise<number> {

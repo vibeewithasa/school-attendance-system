@@ -17,6 +17,11 @@ import { authRoutes } from './auth.routes.js';
 import { createAuthGuards } from './guards.js';
 import { schoolCatalogRoutes } from '../school-catalog/school-catalog.routes.js';
 import { createSchoolCatalogService } from '../school-catalog/school-catalog.service.js';
+import { prefectAssignmentsRoutes } from '../prefect-assignments/prefect-assignments.routes.js';
+import {
+  createPrefectAssignmentsService,
+  pgGroupAssignments,
+} from '../prefect-assignments/prefect-assignments.service.js';
 import { studentsRoutes } from '../students/students.routes.js';
 import { createStudentsService } from '../students/students.service.js';
 import { activationAdminRoutes, activationPublicRoutes } from '../activation/activation.routes.js';
@@ -195,7 +200,16 @@ export async function registerAuth(
   await app.register(
     async (scope) => {
       studentsRoutes(scope, {
-        service: createStudentsService({ store: options.store }),
+        // El alcance assigned_groups se resuelve con las asignaciones REALES de prefectura, dentro de la transaccion de cada consulta.
+        service: createStudentsService({ store: options.store, assignments: pgGroupAssignments }),
+        guards,
+        mfaDeferredAllowed:
+          env.AUTH_MFA_ENFORCEMENT === 'deferred' && env.NODE_ENV !== 'production',
+        floodLimit: limits.floodOther,
+      });
+      // Asignaciones de grupos a prefectura: administra Direccion; la prefectura solo consulta las suyas (/me/groups).
+      prefectAssignmentsRoutes(scope, {
+        service: createPrefectAssignmentsService({ store: options.store }),
         guards,
         mfaDeferredAllowed:
           env.AUTH_MFA_ENFORCEMENT === 'deferred' && env.NODE_ENV !== 'production',

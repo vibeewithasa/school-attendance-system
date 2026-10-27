@@ -22,6 +22,7 @@ import {
   type EnrollBody,
   type EnrollmentDto,
   type EnrollmentStatus,
+  type GroupRosterResponse,
   type GroupAssignmentDto,
   type GroupRefDto,
   type ListStudentsQuery,
@@ -32,6 +33,7 @@ import {
   type WithdrawBody,
 } from '@eta15/shared-contracts';
 import {
+  allowsGroup,
   resolveAccess,
   type Access,
   type Grant,
@@ -65,14 +67,15 @@ export interface StudentsContext {
   requestId?: string | null;
 }
 
-/** Asignaciones vigentes de grupos a usuarios (prefectura). Aun no existen: ver `noGroupAssignments`. */
-export const noGroupAssignments: GroupAssignments = { groupIdsFor: async () => [] };
+/** Fabrica del puerto de asignaciones vigentes (prefectura) ligada a la transaccion de la consulta: mismo instante y mismas filas. */
+export type GroupAssignmentsFactory = (tx: SqlClient) => GroupAssignments;
 
 const FIELD_SPEC: FieldSpec = {
   id: 'students:read_basic',
   givenNames: 'students:read_basic',
   familyName: 'students:read_basic',
-  schoolCode: 'students:read_basic',
+  // El codigo escolar es un identificador administrativo: es del expediente (la prefectura ve solo nombre y grupo).
+  schoolCode: 'students:read',
   isActive: 'students:read_basic',
   currentGroup: 'students:read_basic',
   createdAt: 'students:read',
@@ -151,15 +154,14 @@ const groupRef = (row: {
 
 export interface StudentsServiceOptions {
   store: SessionStore;
-  /** Asignaciones de grupos a usuarios (alcance `assigned_groups`). Por defecto ninguna. */
-  assignments?: GroupAssignments;
+  /** Asignaciones de grupos a usuarios (alcance `assigned_groups`), ligadas a la transaccion de cada consulta. Obligatorio. */
+  assignments: GroupAssignmentsFactory;
   /** "Hoy" (YYYY-MM-DD, hora de la escuela). Por defecto lo calcula la base. Inyectable en pruebas. */
   today?: () => string;
 }
 
 export function createStudentsService(options: StudentsServiceOptions) {
   const { store } = options;
-  const assignments = options.assignments ?? noGroupAssignments;
 
   const todayOf = async (tx: SqlClient): Promise<string> => {
     if (options.today) return options.today();
@@ -202,8 +204,13 @@ export function createStudentsService(options: StudentsServiceOptions) {
   const canManage = (ctx: StudentsContext, permission: string) =>
     ctx.grants.some((g) => g.permission === permission && g.scope === 'all');
 
-  const accessFor = (ctx: StudentsContext, permission: string, today: string): Promise<Access> =>
-    resolveAccess(ctx.grants, permission, ctx.actorId, today, assignments);
+  const accessFor = (
+    tx: SqlClient,
+    ctx: StudentsContext,
+    permission: string,
+    today: string,
+  ): Promise<Access> =>
+    resolveAccess(ctx.grants, permission, ctx.actorId, today, options.assignments(tx));
 
   /** Condicion SQL de alcance sobre `s` (alias de students). `null` = sin filtro; 'none' = cero filas. */
   function scopeWhere(
@@ -341,7 +348,7 @@ export function createStudentsService(options: StudentsServiceOptions) {
     studentId: string,
     today: string,
   ): Promise<boolean> {
-    const access = await accessFor(ctx, 'students:read', today);
+    const access = await accessFor(tx, ctx, 'students:read', today);
     if (access.kind === 'all') return true;
     const params: unknown[] = [today, studentId];
     const where = scopeWhere(access, params, '$1');
@@ -490,8 +497,12 @@ export function createStudentsService(options: StudentsServiceOptions) {
       return guardRead(async () => {
         const result = await store.transaction(async (tx) => {
           const today = await todayOf(tx);
-          const access = await accessFor(ctx, 'students:read_basic', today);
+          const access = await accessFor(tx, ctx, 'students:read_basic', today);
           if (access.kind === 'denied') return 'forbidden' as const;
+          // Con alcance limitado (prefectura) solo se consulta el estado de HOY: filtrar por ciclo o por fecha pasada revelaria
+          // matriculas e historial de otros periodos de alumnos que hoy si estan en su grupo.
+          if (access.kind !== 'all' && (query.schoolYearId || query.asOf)) return 'filter' as const;
+          const exp = await accessFor(tx, ctx, 'students:read', today);
           const params: unknown[] = [today];
           // `$1` (hoy) siempre se referencia: PostgreSQL rechaza parametros sin tipo que no aparecen en la sentencia.
           const cond: string[] = ['$1::date IS NOT NULL'];
@@ -502,9 +513,11 @@ export function createStudentsService(options: StudentsServiceOptions) {
           if (query.q) {
             params.push(`%${escapeLike(query.q)}%`);
             const p = `$${params.length}`;
+            // Buscar por codigo equivale a leerlo: solo quien ve el codigo (students:read con alcance all).
+            const byCode = exp.kind === 'all' ? ` OR s.school_code ILIKE ${p}` : '';
             cond.push(
               `(s.family_name ILIKE ${p} OR s.given_names ILIKE ${p} OR (s.given_names || ' ' || s.family_name) ILIKE ${p}
-                OR (s.family_name || ' ' || s.given_names) ILIKE ${p} OR s.school_code ILIKE ${p})`,
+                OR (s.family_name || ' ' || s.given_names) ILIKE ${p}${byCode})`,
             );
           }
           if (query.isActive !== undefined) {
@@ -539,7 +552,6 @@ export function createStudentsService(options: StudentsServiceOptions) {
             `${STUDENT_SELECT('$1')} ${where} ORDER BY s.family_name, s.given_names, s.id LIMIT $${params.length - 1} OFFSET $${params.length}`,
             params,
           );
-          const exp = await accessFor(ctx, 'students:read', today);
           const expedienteAll = exp.kind === 'all';
           const items = rows.rows.map((r) => toStudentDto(r, ctx, expedienteAll));
           if (query.q)
@@ -550,6 +562,12 @@ export function createStudentsService(options: StudentsServiceOptions) {
           await denied(ctx, 'students.list');
           return forbidden();
         }
+        if (result === 'filter')
+          return fail(
+            'VALIDATION',
+            'Ese filtro no está disponible con su alcance',
+            'FILTER_NOT_ALLOWED',
+          );
         return { ok: true as const, value: result };
       });
     },
@@ -558,7 +576,7 @@ export function createStudentsService(options: StudentsServiceOptions) {
       return guardRead(async () => {
         const result = await store.transaction(async (tx) => {
           const today = await todayOf(tx);
-          const access = await accessFor(ctx, 'students:read_basic', today);
+          const access = await accessFor(tx, ctx, 'students:read_basic', today);
           if (access.kind === 'denied') return 'forbidden' as const;
           const row = await loadVisibleStudent(tx, ctx, id, today, access);
           if (!row) return 'missing' as const;
@@ -571,6 +589,74 @@ export function createStudentsService(options: StudentsServiceOptions) {
           return forbidden();
         }
         if (result === 'missing') return notFound();
+        return { ok: true as const, value: result };
+      });
+    },
+
+    /**
+     * Lista de un grupo para pasar lista (cliente Android): alumnos con asignacion vigente HOY, solo id y nombre. El grupo debe estar
+     * dentro del alcance de `students:read_basic` (assigned_groups => solo los suyos); si no, es indistinguible de uno inexistente.
+     */
+    async getGroupRoster(
+      ctx: StudentsContext,
+      groupId: string,
+    ): Promise<StudentsResult<GroupRosterResponse>> {
+      return guardRead(async () => {
+        const result = await store.transaction(async (tx) => {
+          const today = await todayOf(tx);
+          const access = await accessFor(tx, ctx, 'students:read_basic', today);
+          if (access.kind === 'denied') return 'forbidden' as const;
+          if (!allowsGroup(access, groupId)) return 'missing' as const;
+          const group = (
+            await tx.query<{
+              id: string;
+              school_year_id: string;
+              year_name: string;
+              grade: number;
+              code: string;
+              shift: 'matutino' | 'vespertino' | null;
+            }>(
+              `SELECT g.id, g.school_year_id, y.name AS year_name, g.grade, g.code, g.shift
+                 FROM groups g JOIN school_years y ON y.id = g.school_year_id WHERE g.id = $1`,
+              [groupId],
+            )
+          ).rows[0];
+          if (!group) return 'missing' as const;
+          const rows = await tx.query<{ id: string; given_names: string; family_name: string }>(
+            `SELECT s.id, s.given_names, s.family_name
+               FROM students s
+              WHERE s.is_active AND EXISTS (
+                SELECT 1 FROM student_group_assignments sa JOIN enrollments se ON se.id = sa.enrollment_id
+                  JOIN school_years sy ON sy.id = sa.school_year_id
+                 WHERE se.student_id = s.id AND sa.group_id = $1 AND sa.starts_on <= $2::date
+                   AND (sa.ends_on IS NULL OR sa.ends_on >= $2::date) AND $2::date <= sy.ends_on)
+              ORDER BY s.family_name, s.given_names, s.id LIMIT 1000`,
+            [groupId, today],
+          );
+          await audit(tx, ctx, 'roster.viewed', { groupId, count: rows.rows.length });
+          return {
+            asOf: today,
+            generatedAt: new Date().toISOString(),
+            group: groupRef({
+              id: group.id,
+              schoolYearId: group.school_year_id,
+              schoolYearName: group.year_name,
+              grade: group.grade,
+              code: group.code,
+              shift: group.shift,
+            }),
+            students: rows.rows.map((r) => ({
+              id: r.id,
+              givenNames: r.given_names,
+              familyName: r.family_name,
+            })),
+          };
+        });
+        if (result === 'forbidden') {
+          await denied(ctx, 'students.roster');
+          return forbidden();
+        }
+        if (result === 'missing') return fail('NOT_FOUND', 'No se encontró el grupo');
         return { ok: true as const, value: result };
       });
     },
@@ -721,10 +807,10 @@ export function createStudentsService(options: StudentsServiceOptions) {
       return guardRead(async () => {
         const result = await store.transaction(async (tx) => {
           const today = await todayOf(tx);
-          const read = await accessFor(ctx, 'students:read', today);
+          const read = await accessFor(tx, ctx, 'students:read', today);
           if (read.kind === 'denied') return 'forbidden' as const;
           // el alumno debe ser visible con ambos permisos (basico y expediente); fuera de alcance = inexistente
-          const basic = await accessFor(ctx, 'students:read_basic', today);
+          const basic = await accessFor(tx, ctx, 'students:read_basic', today);
           if (basic.kind === 'denied') return 'forbidden' as const;
           const visible = await loadVisibleStudent(tx, ctx, studentId, today, basic);
           if (!visible || !(await canSeeExpediente(tx, ctx, studentId, today)))
@@ -748,8 +834,8 @@ export function createStudentsService(options: StudentsServiceOptions) {
       return guardRead(async () => {
         const result = await store.transaction(async (tx) => {
           const today = await todayOf(tx);
-          const read = await accessFor(ctx, 'students:read', today);
-          const basic = await accessFor(ctx, 'students:read_basic', today);
+          const read = await accessFor(tx, ctx, 'students:read', today);
+          const basic = await accessFor(tx, ctx, 'students:read_basic', today);
           if (read.kind === 'denied' || basic.kind === 'denied') return 'forbidden' as const;
           const list = await loadEnrollments(tx, { enrollmentId }, today);
           const enrollment = list[0];

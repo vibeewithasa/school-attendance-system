@@ -18,10 +18,12 @@ afterAll(async () => {
 function suite(label: string, privileges: 'full' | 'none') {
   let cluster: ApiCluster;
   beforeAll(async () => {
-    // Estado objetivo de eta15_dev: 0002 (catalogo) y 0003 (alumnos); cambiar fechas de un ciclo lee matriculas (trigger de 0007).
+    // Estado objetivo: 0002 (catalogo), 0003 (alumnos) y 0004 (prefectura); cambiar fechas de un ciclo lee matriculas y asignaciones
+    // de prefectura con los privilegios de la API (triggers de 0007 y 0009).
     cluster = await startApiCluster(20, {
       catalogWrite: privileges === 'full',
       studentsWrite: privileges === 'full',
+      prefectWrite: privileges === 'full',
     });
     clusters.push(cluster);
   }, 240_000);

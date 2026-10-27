@@ -1,4 +1,11 @@
 import type {
+  ClosePrefectAssignmentBody,
+  CreatePrefectAssignmentBody,
+  ListPrefectAssignmentsQuery,
+  PrefectAssignmentDto,
+  PrefectAssignmentList,
+  PrefectCandidateDto,
+  RevokePrefectAssignmentBody,
   AssignGroupBody,
   CreateStudentBody,
   EnrollBody,
@@ -210,6 +217,18 @@ export const api = {
     mutate<EnrollmentDto>(`/school/enrollments/${enrollmentId}/group-assignments`, 'POST', body),
   transferGroup: (enrollmentId: string, body: TransferBody) =>
     mutate<EnrollmentDto>(`/school/enrollments/${enrollmentId}/transfer`, 'POST', body),
+
+  // --- Asignaciones de grupos a prefectura (administra Direccion; el servidor autoriza cada llamada). Sin borrado. ---
+  listPrefectCandidates: (q: { q?: string } = {}) =>
+    request<PrefectCandidateDto[]>(`/school/prefect-candidates${query({ ...q })}`),
+  listPrefectAssignments: (q: Partial<ListPrefectAssignmentsQuery> = {}) =>
+    request<PrefectAssignmentList>(`/school/prefect-assignments${query({ ...q })}`),
+  createPrefectAssignment: (body: CreatePrefectAssignmentBody) =>
+    mutate<PrefectAssignmentDto>('/school/prefect-assignments', 'POST', body),
+  closePrefectAssignment: (id: string, body: ClosePrefectAssignmentBody = {}) =>
+    mutate<PrefectAssignmentDto>(`/school/prefect-assignments/${id}/close`, 'POST', body),
+  revokePrefectAssignment: (id: string, body: RevokePrefectAssignmentBody) =>
+    mutate<PrefectAssignmentDto>(`/school/prefect-assignments/${id}/revoke`, 'POST', body),
 
   // --- Activacion por la persona titular (rutas publicas; el secreto nunca sale de esta pagina salvo al completar) ---
   activationRequest: (email: string, secretHash: string) =>

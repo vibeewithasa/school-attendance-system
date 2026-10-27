@@ -51,7 +51,7 @@ export function Layout() {
         </div>
         {/* La navegacion solo muestra lo que la sesion puede usar; el servidor vuelve a autorizar cada llamada. */}
         {me && (
-          <nav aria-label="Principal" className="mx-auto flex max-w-5xl gap-1 px-4">
+          <nav aria-label="Principal" className="mx-auto flex max-w-5xl flex-wrap gap-1 px-4">
             <NavLink to="/" end className={navClass}>
               Inicio
             </NavLink>
@@ -63,6 +63,11 @@ export function Layout() {
             {permissionsOf(me).canViewStudents && (
               <NavLink to="/alumnos" className={navClass}>
                 Alumnos
+              </NavLink>
+            )}
+            {permissionsOf(me).canViewPrefectAssignments && (
+              <NavLink to="/prefectura" className={navClass}>
+                Asignaciones de prefectura
               </NavLink>
             )}
             {permissionsOf(me).canViewCatalog && (
