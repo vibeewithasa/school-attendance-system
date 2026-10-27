@@ -9,9 +9,18 @@ import type {
   AuthCsrfResponse,
   AuthLoginResponse,
   AuthMeResponse,
+  CreateGroupBody,
+  CreateSchoolYearBody,
   CreateUserBody,
+  GroupDto,
+  GroupList,
   HealthResponse,
   ListUsersQuery,
+  SchoolYearDto,
+  SchoolYearList,
+  Shift,
+  UpdateGroupBody,
+  UpdateSchoolYearBody,
 } from '@eta15/shared-contracts';
 
 /** Base de la API. En desarrollo Vite redirige /api a la API local (ver vite.config.ts). */
@@ -41,7 +50,7 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): voi
 }
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
   /** Valor para X-CSRF-Token (solo en memoria; se obtiene de GET /auth/csrf cuando se necesita). */
   csrf?: string;
@@ -90,12 +99,16 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
  * Mutaciones autenticadas: piden un valor CSRF ligado a la sesion justo antes de cada cambio (no se guarda: no hay estado
  * obsoleto que invalidar) y lo envian en la cabecera. El servidor ademas comprueba Origin y Fetch Metadata.
  */
-async function mutate<T>(path: string, method: 'POST' | 'DELETE', body?: unknown): Promise<T> {
+async function mutate<T>(
+  path: string,
+  method: 'POST' | 'PATCH' | 'DELETE',
+  body?: unknown,
+): Promise<T> {
   const { csrfToken } = await request<AuthCsrfResponse>('/auth/csrf');
   return request<T>(path, { method, body, csrf: csrfToken });
 }
 
-const query = (params: Record<string, string | number | undefined>): string => {
+const query = (params: Record<string, string | number | boolean | undefined>): string => {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== '') search.set(key, String(value));
@@ -138,6 +151,32 @@ export const api = {
     mutate<{ state: 'authorized' }>(`/admin/activation-requests/${id}/approve`, 'POST', body),
   cancelActivation: (id: string) =>
     mutate<{ state: 'cancelled' }>(`/admin/activation-requests/${id}/cancel`, 'POST'),
+
+  // --- Catalogo escolar (ciclos y grupos). Sin borrado: se desactiva. El servidor autoriza cada llamada. ---
+  listSchoolYears: (q: { page?: number; pageSize?: number; isActive?: boolean } = {}) =>
+    request<SchoolYearList>(`/catalog/school-years${query({ ...q })}`),
+  createSchoolYear: (body: CreateSchoolYearBody) =>
+    mutate<SchoolYearDto>('/catalog/school-years', 'POST', body),
+  updateSchoolYear: (id: string, body: UpdateSchoolYearBody) =>
+    mutate<SchoolYearDto>(`/catalog/school-years/${id}`, 'PATCH', body),
+  activateSchoolYear: (id: string) =>
+    mutate<SchoolYearDto>(`/catalog/school-years/${id}/activate`, 'POST'),
+  deactivateSchoolYear: (id: string) =>
+    mutate<SchoolYearDto>(`/catalog/school-years/${id}/deactivate`, 'POST'),
+  listGroups: (
+    q: {
+      page?: number;
+      pageSize?: number;
+      schoolYearId?: string;
+      grade?: number;
+      shift?: Shift | 'none';
+      isActive?: boolean;
+      q?: string;
+    } = {},
+  ) => request<GroupList>(`/catalog/groups${query({ ...q })}`),
+  createGroup: (body: CreateGroupBody) => mutate<GroupDto>('/catalog/groups', 'POST', body),
+  updateGroup: (id: string, body: UpdateGroupBody) =>
+    mutate<GroupDto>(`/catalog/groups/${id}`, 'PATCH', body),
 
   // --- Activacion por la persona titular (rutas publicas; el secreto nunca sale de esta pagina salvo al completar) ---
   activationRequest: (email: string, secretHash: string) =>

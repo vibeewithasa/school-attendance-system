@@ -50,6 +50,7 @@ const RAW_PERMISSIONS: readonly PermissionDef[] = [
   },
   // Tecnicos
   {
+    // Reservado y SIN asignar desde la migracion 0006: la administracion del catalogo escolar es de Direccion (catalog:manage_school).
     key: 'catalog:manage',
     domain: 'technical',
     description: 'Crear y modificar ciclos escolares y grupos',
@@ -98,6 +99,12 @@ const RAW_PERMISSIONS: readonly PermissionDef[] = [
     scopes: ALL,
   },
   // Escolares
+  {
+    key: 'catalog:manage_school',
+    domain: 'school',
+    description: 'Crear y modificar ciclos escolares y grupos (dominio escolar)',
+    scopes: ALL,
+  },
   {
     key: 'users:manage_school',
     domain: 'school',
@@ -237,7 +244,7 @@ export const ROLES: readonly RoleDef[] = [
     sessionAbsoluteMinutes: 720,
     maxConcurrentSessions: 5,
     grants: [
-      g('catalog:read'),
+      // Sin catalog:read global (0006): se concedera cuando exista el requerimiento, con alcance assigned_groups ya aplicado.
       g('students:read_basic', 'assigned_groups'),
       g('students:read', 'assigned_groups'),
       g('attendance:capture', 'assigned_groups'),
@@ -255,7 +262,6 @@ export const ROLES: readonly RoleDef[] = [
     sessionAbsoluteMinutes: 720,
     maxConcurrentSessions: 5,
     grants: [
-      g('catalog:read'),
       g('students:read_basic'),
       g('students:read'),
       g('attendance:read'),
@@ -272,7 +278,7 @@ export const ROLES: readonly RoleDef[] = [
     sessionIdleMinutes: 60,
     sessionAbsoluteMinutes: 720,
     maxConcurrentSessions: 5,
-    grants: [g('catalog:read'), g('students:read_basic'), g('access:scan'), g('access:read')],
+    grants: [g('students:read_basic'), g('access:scan'), g('access:read')],
   },
   {
     key: 'direccion',
@@ -286,6 +292,7 @@ export const ROLES: readonly RoleDef[] = [
     maxConcurrentSessions: 5,
     grants: [
       g('catalog:read'),
+      g('catalog:manage_school'),
       g('users:read'),
       g('roles:read'),
       g('users:manage_school'),
@@ -315,7 +322,6 @@ export const ROLES: readonly RoleDef[] = [
       g('catalog:read'),
       g('users:read'),
       g('roles:read'),
-      g('catalog:manage'),
       g('users:manage_technical'),
       g('users:disable_any'),
       g('users:revoke_sessions_any'),

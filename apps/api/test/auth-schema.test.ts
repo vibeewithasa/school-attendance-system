@@ -359,7 +359,9 @@ describe('audit_events: proteccion frente a la API y limites frente al propietar
     await asApi(db, () =>
       db.query(`insert into audit_events (event_type, outcome) values ('auth.logout', 'success')`),
     );
-    const r = await db.query<{ n: number }>(`select count(*)::int n from audit_events`);
+    const r = await db.query<{ n: number }>(
+      `select count(*)::int n from audit_events where event_type <> 'role.permissions_changed'`,
+    );
     expect(r.rows[0]!.n).toBe(2);
   });
   it('el rol de la API (aun con todos los privilegios de tabla) no puede UPDATE, DELETE ni TRUNCATE', async () => {

@@ -19,7 +19,10 @@ const newPassword = () => `Sbx-${randomBytes(12).toString('base64url')}`;
 
 async function main(): Promise<void> {
   console.log('Iniciando el entorno aislado (clúster PostgreSQL desechable)…');
-  const cluster = await startApiCluster(10);
+  // --catalog-write aplica la PROPUESTA de privilegios 0002 (escritura del catalogo) SOLO en este clúster desechable; en
+  // eta15_dev no se aplica sin autorizacion. Sin la opcion, las escrituras del catalogo responden 503 como en eta15_dev.
+  const catalogWrite = process.argv.includes('--catalog-write');
+  const cluster = await startApiCluster(10, { catalogWrite });
   // Aislamiento: el clúster desechable usa un puerto propio; jamas el del servicio de PostgreSQL de Windows (5432).
   if (cluster.pgt.port === 5432) {
     await cluster.stop();

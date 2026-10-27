@@ -37,7 +37,11 @@ export async function buildApp(env: Env, deps: AppDependencies = {}): Promise<Fa
   const origins = env.CORS_ORIGIN.split(',')
     .map((o) => o.trim())
     .filter(Boolean);
-  await app.register(cors, { origin: origins, credentials: true });
+  await app.register(cors, {
+    origin: origins,
+    credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  });
   registerErrorHandling(app);
   await registerHttpSecurity(app, env);
 

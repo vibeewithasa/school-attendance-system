@@ -45,7 +45,38 @@ function step(name: 'PASO 1' | 'PASO 2' | 'PASO 3'): string[] {
     .filter(Boolean);
 }
 
-export async function startApiCluster(poolMax = 20): Promise<ApiCluster> {
+/** Texto completo de un archivo de tools/db/privileges. */
+export function privilegeFile(file: string): string {
+  return readFileSync(
+    join(import.meta.dirname, '..', '..', '..', '..', 'tools', 'db', 'privileges', file),
+    'utf8',
+  );
+}
+
+/** Sentencias de un archivo de privilegios de tools/db/privileges (sin comentarios ni metacomandos de psql). */
+export function privilegeStatements(file: string): string[] {
+  const text = readFileSync(
+    join(import.meta.dirname, '..', '..', '..', '..', 'tools', 'db', 'privileges', file),
+    'utf8',
+  );
+  return text
+    .split('\n')
+    .filter((l) => !l.trim().startsWith('--') && !l.trim().startsWith('\\'))
+    .join('\n')
+    .split(/;\s*(?:\n|$)/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+export interface ApiClusterOptions {
+  /** Aplica la PROPUESTA 0002 (escritura del catalogo escolar). Por defecto NO, como en eta15_dev real. */
+  catalogWrite?: boolean;
+}
+
+export async function startApiCluster(
+  poolMax = 20,
+  options: ApiClusterOptions = {},
+): Promise<ApiCluster> {
   const pgt = await startTempPostgres();
   const superuser = await pgt.connect();
   await superuser.query(`create role eta15_app login`);
@@ -55,6 +86,12 @@ export async function startApiCluster(poolMax = 20): Promise<ApiCluster> {
   for (const stmt of step('PASO 1')) await superuser.query(stmt);
   for (const stmt of step('PASO 2')) await owner.query(stmt);
   for (const stmt of step('PASO 3')) await superuser.query(stmt);
+  if (options.catalogWrite) {
+    for (const stmt of privilegeStatements('0002-school-catalog-write.proposal.sql'))
+      await owner.query(stmt);
+    // Verificacion oficial de solo lectura: falla si los privilegios efectivos difieren de lo esperado.
+    await owner.query(privilegeFile('0002-school-catalog-write.verify.sql'));
+  }
   const pool = new pg.Pool({
     host: '127.0.0.1',
     port: pgt.port,

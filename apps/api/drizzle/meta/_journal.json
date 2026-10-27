@@ -43,6 +43,13 @@
       "when": 1793001166120,
       "tag": "0005_auth_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793059526726,
+      "tag": "0006_catalog_rbac_school_management",
+      "breakpoints": true
     }
   ]
 }

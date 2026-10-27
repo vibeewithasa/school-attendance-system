@@ -67,6 +67,7 @@ describe('historial de migraciones de Drizzle', () => {
     '0003_auth_schema',
     '0004_auth_seed_roles_permissions',
     '0005_auth_integrity',
+    '0006_catalog_rbac_school_management',
   ];
 
   it('el journal registra todas las migraciones en orden, con marcas de tiempo crecientes', () => {

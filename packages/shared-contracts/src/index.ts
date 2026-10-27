@@ -47,3 +47,4 @@ export interface AuthCsrfResponse {
 export * from './admin-users.js';
 export * from './activation.js';
 export * from './password-policy.js';
+export * from './school-catalog.js';

@@ -324,7 +324,7 @@ describe('permisos de autoridad y edicion de roles', () => {
     await db.exec(`select set_config('eta15.actor_id', '', false)`);
     const r = await db.query<{ change: string; actor: string }>(
       `select details->>'change' change, actor_user_id actor from audit_events
-        where event_type='role.permissions_changed' and details->>'role'='control_acceso' order by occurred_at, id`,
+        where event_type='role.permissions_changed' and details->>'role'='control_acceso' and details->>'permission'='students:read' order by occurred_at, id`,
     );
     expect(r.rows).toEqual([
       { change: 'add', actor: d1 },

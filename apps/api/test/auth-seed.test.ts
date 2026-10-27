@@ -110,24 +110,36 @@ describe('semilla en la base (0005) = catalogo en codigo', () => {
     );
     expect(r.rows[0]!.n).toBe(0);
   });
-  it('NO siembra usuarios, sesiones, tokens ni eventos de auditoria', async () => {
-    for (const t of ['users', 'user_roles', 'sessions', 'auth_tokens', 'audit_events']) {
+  it('NO siembra usuarios, sesiones ni tokens; la unica auditoria es la de las altas/bajas de 0006', async () => {
+    for (const t of ['users', 'user_roles', 'sessions', 'auth_tokens']) {
       const r = await db.query<{ n: number }>(`select count(*)::int n from ${t}`);
       expect(r.rows[0]!.n, t).toBe(0);
     }
+    const audit = await db.query<{ event_type: string; actor_user_id: string | null }>(
+      `select event_type, actor_user_id from audit_events`,
+    );
+    // 0006 (politica del catalogo): 1 alta (direccion) + 4 bajas (admin_tecnico y 3 roles escolares), sin actor (migracion)
+    expect(audit.rows).toHaveLength(5);
+    expect(
+      audit.rows.every(
+        (x) => x.event_type === 'role.permissions_changed' && x.actor_user_id === null,
+      ),
+    ).toBe(true);
   });
-  it('la semilla es idempotente: reaplicarla no cambia nada', async () => {
-    const before = await db.query<{ n: number }>(
-      `select (select count(*) from permissions)::int + (select count(*) from roles)::int + (select count(*) from role_permissions)::int n`,
-    );
-    const sql = readFileSync(
-      join(import.meta.dirname, '..', 'drizzle', '0004_auth_seed_roles_permissions.sql'),
-      'utf8',
-    );
-    for (const stmt of sql.split('--> statement-breakpoint')) await db.exec(stmt);
-    const after = await db.query<{ n: number }>(
-      `select (select count(*) from permissions)::int + (select count(*) from roles)::int + (select count(*) from role_permissions)::int n`,
-    );
+  it('la cadena de semilla (0004 + 0006) es idempotente: reaplicarla no cambia nada', async () => {
+    const count = () =>
+      db.query<{ n: number }>(
+        `select (select count(*) from permissions)::int + (select count(*) from roles)::int + (select count(*) from role_permissions)::int n`,
+      );
+    const before = await count();
+    for (const file of [
+      '0004_auth_seed_roles_permissions.sql',
+      '0006_catalog_rbac_school_management.sql',
+    ]) {
+      const sql = readFileSync(join(import.meta.dirname, '..', 'drizzle', file), 'utf8');
+      for (const stmt of sql.split('--> statement-breakpoint')) await db.exec(stmt);
+    }
+    const after = await count();
     expect(after.rows[0]!.n).toBe(before.rows[0]!.n);
   });
 });

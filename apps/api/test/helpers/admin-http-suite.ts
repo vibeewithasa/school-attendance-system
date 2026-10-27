@@ -30,6 +30,8 @@ type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-ex
 const json = (r: Res) => r.json() as Json;
 
 export interface AdminSuiteExtras {
+  /** Solo se ejecutan las pruebas adicionales (extra); las de /admin se omiten. */
+  onlyExtra?: boolean;
   /** Pruebas adicionales que se ejecutan con la misma app y utilidades (p. ej. concurrencia real). */
   extra?: (kit: AdminKit) => void;
 }
@@ -42,7 +44,7 @@ export interface AdminKit {
   login: (account: Account, target?: FastifyInstance) => Promise<Login>;
   call: (
     login: Login | null,
-    method: 'GET' | 'POST' | 'DELETE',
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
     url: string,
     opts?: { body?: unknown; csrf?: boolean | string; origin?: boolean; target?: FastifyInstance },
   ) => Promise<Res>;
@@ -74,6 +76,8 @@ export function defineAdminHttpSuite(
   setup: () => Promise<{ harness: Harness; teardown: () => Promise<void> }>,
   extras: AdminSuiteExtras = {},
 ): void {
+  // `onlyExtra`: el montaje de cuentas se reutiliza, pero las pruebas de /admin no se registran (ni siquiera como omitidas).
+  const sub = (extras.onlyExtra ? () => undefined : describe) as typeof describe;
   describe(`HTTP /admin (${label})`, () => {
     let harness: Harness;
     let teardown: () => Promise<void>;
@@ -142,7 +146,7 @@ export function defineAdminHttpSuite(
 
     async function call(
       who: Login | null,
-      method: 'GET' | 'POST' | 'DELETE',
+      method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
       url: string,
       opts: {
         body?: unknown;
@@ -230,7 +234,7 @@ export function defineAdminHttpSuite(
     });
 
     // ----------------------------------------------------------------------------------------------- acceso
-    describe('acceso', () => {
+    sub('acceso', () => {
       it('sin sesion: 401 en todas las rutas administrativas', async () => {
         const id = '00000000-0000-4000-8000-000000000001';
         for (const [m, u] of [
@@ -311,7 +315,7 @@ export function defineAdminHttpSuite(
     });
 
     // ----------------------------------------------------------------------------------------------- cuentas
-    describe('crear y consultar cuentas', () => {
+    sub('crear y consultar cuentas', () => {
       it('direccion crea una cuenta PENDIENTE sin contrasena; el actor es la sesion; se audita; sin datos sensibles', async () => {
         const me = await login(boss);
         const res = await newAccount(me);
@@ -466,7 +470,7 @@ export function defineAdminHttpSuite(
     });
 
     // ----------------------------------------------------------------------------------------------- roles
-    describe('asignar y revocar roles', () => {
+    sub('asignar y revocar roles', () => {
       it('asignacion valida: la concede el actor de la sesion, queda auditada y se refleja en la cuenta', async () => {
         const me = await login(boss);
         const acct = json(await newAccount(me));
@@ -649,7 +653,7 @@ export function defineAdminHttpSuite(
     });
 
     // ----------------------------------------------------------------------------------------------- deshabilitar
-    describe('deshabilitar cuentas', () => {
+    sub('deshabilitar cuentas', () => {
       it('deshabilita, revoca sesiones, audita y es idempotente; no se re-habilita por la API', async () => {
         const me = await login(techBoss);
         const target = await seed({ domain: 'technical', role: 'admin_tecnico' });
@@ -695,7 +699,7 @@ export function defineAdminHttpSuite(
     });
 
     // ----------------------------------------------------------------------------------------------- transversales
-    describe('transversales', () => {
+    sub('transversales', () => {
       it('sesion expirada o revocada: 401 en las rutas administrativas', async () => {
         const dir = await seed({ role: 'direccion' });
         const s = await login(dir);

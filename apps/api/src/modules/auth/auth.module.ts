@@ -15,6 +15,8 @@ import { adminUsersRoutes } from '../admin-users/admin-users.routes.js';
 import { createAdminUsersService } from '../admin-users/admin-users.service.js';
 import { authRoutes } from './auth.routes.js';
 import { createAuthGuards } from './guards.js';
+import { schoolCatalogRoutes } from '../school-catalog/school-catalog.routes.js';
+import { createSchoolCatalogService } from '../school-catalog/school-catalog.service.js';
 import { activationAdminRoutes, activationPublicRoutes } from '../activation/activation.routes.js';
 import { createActivationService } from '../activation/activation.service.js';
 import { checkRequestOrigin, isUnsafeMethod, parseAllowedOrigins } from './csrf.js';
@@ -173,6 +175,19 @@ export async function registerAuth(
       });
     },
     { prefix: '/admin' },
+  );
+  // Catalogo escolar (ciclos y grupos): lectura con catalog:read, escritura con catalog:manage_school (Direccion; ver school-catalog.routes.ts).
+  await app.register(
+    async (scope) => {
+      schoolCatalogRoutes(scope, {
+        service: createSchoolCatalogService({ store: options.store }),
+        guards,
+        mfaDeferredAllowed:
+          env.AUTH_MFA_ENFORCEMENT === 'deferred' && env.NODE_ENV !== 'production',
+        floodLimit: limits.floodOther,
+      });
+    },
+    { prefix: '/catalog' },
   );
   return { sessions };
 }

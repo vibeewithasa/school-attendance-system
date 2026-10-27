@@ -31,6 +31,9 @@ export function permissionsOf(me: AuthMeResponse) {
     /** Dominios en los que puede asignar y revocar roles. */
     grantable,
     canViewPersonnel: has.has('users:read') && manageable.length > 0,
+    /** Catalogo escolar: leer o administrar ciclos y grupos (solo presentacion; el servidor autoriza). */
+    canViewCatalog: has.has('catalog:read'),
+    canManageCatalog: has.has('catalog:manage_school'),
     canCreate: (domain: Domain) => has.has(`users:manage_${domain}`),
     canGrant: (domain: Domain) => has.has(`roles:grant_${domain}`),
     canDisable: (domain: Domain) =>

@@ -57,6 +57,62 @@ school_years 1 ──< groups
 - **Fuera de alcance, a propósito**: tolerancia de retardo, cálculo de retardos y eventos de acceso. La asistencia diaria de prefectura y los escaneos de acceso son conceptos independientes: el escaneo no genera ni modifica asistencia.
 - **Historial (pendiente de decidir al implementar acceso)**: cambiar `expected_entry_time` en un grupo reescribiría, en apariencia, las evaluaciones pasadas, porque la tabla guarda solo el valor vigente (`updated_at` indica _cuándo_ cambió, no el valor anterior). Recomendación: cuando exista la tabla de eventos de acceso, **cada evento guardará una copia (snapshot) de la hora esperada y de la tolerancia usadas al evaluarlo**. Así el histórico no depende de este campo y no hace falta una tabla de versiones de horarios para el MVP. Si más adelante se necesitaran horarios por fecha (p. ej. horario especial de un día), se evaluaría una tabla de excepciones.
 
+## API y autorización del catálogo (rama `feat/school-catalog-api`, sin commit)
+
+Prefijo `/catalog`. Contratos Zod estrictos en `packages/shared-contracts/src/school-catalog.ts` (los usan la API y la interfaz).
+Sin `DELETE` en ninguna ruta: se desactiva. Los errores no incluyen texto de PostgreSQL ni repiten la entrada.
+
+| Método y ruta                       | Permiso                 | Qué hace                                                                                                         |
+| ----------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `GET /school-years`, `GET …/:id`    | `catalog:read`          | Lista paginada (`page`, `pageSize` ≤ 100, `isActive`) y detalle; `period` (pasado/vigente/futuro) y `groupCount` |
+| `POST /school-years`                | `catalog:manage_school` | Alta (`name`, `startsOn`, `endsOn`); no activa; 201 + `Location`                                                 |
+| `PATCH /school-years/:id`           | `catalog:manage_school` | Cambia nombre y/o fechas (al menos un campo)                                                                     |
+| `POST /school-years/:id/activate`   | `catalog:manage_school` | Hace vigente el ciclo y desactiva el anterior en la misma transacción; idempotente                               |
+| `POST /school-years/:id/deactivate` | `catalog:manage_school` | Quita la vigencia; idempotente                                                                                   |
+| `GET /groups`, `GET …/:id`          | `catalog:read`          | Filtros `schoolYearId`, `grade`, `shift` (incluye `none`), `isActive`, `q` (código)                              |
+| `POST /groups`                      | `catalog:manage_school` | Alta (`schoolYearId`, `grade`, `code`, `shift?`, `expectedEntryTime?`)                                           |
+| `PATCH /groups/:id`                 | `catalog:manage_school` | Cambia `code`, `shift`, `expectedEntryTime` e `isActive`. **No** cambia ciclo ni grado                           |
+
+**Reglas de negocio** (además de las constraints de la BD, que siguen siendo la última defensa):
+
+- "Hoy" es la fecha en `America/Mazatlan`. Solo se **activa** el ciclo que incluye hoy, y el ciclo vigente debe seguir incluyéndolo al editarlo. La activación toma un candado de asesoría (`eta15.school_year.active`) y relee el estado, así que diez activaciones simultáneas dejan un solo vigente.
+- Duración de un ciclo: 60 a 400 días (ambos extremos incluidos). Traslapes y nombres duplicados → 409 con mensaje claro.
+- **Historial inmutable**: un ciclo cuya fecha de fin ya pasó no se edita y no admite grupos nuevos; sus grupos tampoco se modifican (409 `HISTORICAL`). Los ciclos futuros sí se editan y reciben grupos.
+- La hora de entrada es `HH:MM` (también `HH:MM:00`), 00:00–23:59, sin segundos, opcional (`null` = sin configurar) y **independiente del turno**.
+- Sin cambios reales (mismo valor) no se escribe ni se audita. Auditoría: `school_year.created|updated|activated|deactivated`, `group.created|updated` (con antes/después de los campos cambiados) y `authz.denied` para los rechazos; sin contraseñas, tokens ni cookies.
+
+**Autorización** (RBAC real; `role_permissions` nunca lo modifica la API): leer exige `catalog:read` y escribir `catalog:manage_school`, ambos con alcance `all` (solo cuentan los permisos con ese alcance). Las mutaciones pasan además por la puerta de MFA (`adminGuard`), CSRF (Origin + Fetch Metadata + token ligado a la sesión) y límite de peticiones. Un usuario autenticado cualquiera no administra el catálogo.
+
+### Política RBAC del catálogo (propuesta técnica del MVP, pendiente de ratificación institucional antes del uso real)
+
+| Rol                                | Consulta | Administra ciclos y grupos  | Nota                                                                                                        |
+| ---------------------------------- | :------: | :-------------------------: | ----------------------------------------------------------------------------------------------------------- |
+| `direccion` (escolar)              |    ✓     | ✓ (`catalog:manage_school`) | Solo dentro del dominio escolar; con MFA (diferido solo en desarrollo local), CSRF, auditoría y sesiones    |
+| `admin_tecnico` (técnico)          |    ✓     |              —              | Conserva sus permisos técnicos; **sin** autoridad escolar ni datos de alumnos. Lee el catálogo para soporte |
+| `prefectura`                       |    —     |              —              | Sin `catalog:read` global: lo tendrá con alcance `assigned_groups` cuando exista y esté probado             |
+| `trabajo_social`, `control_acceso` |    —     |              —              | Sin lectura hasta que exista un requerimiento funcional                                                     |
+
+**Diagnóstico original.** `catalog:manage` se sembró (0004) con dominio `technical` y solo `admin_tecnico` lo recibió, así que `direccion` (rol escolar) obtenía 403. No bastaba cambiar un arreglo de permisos en TypeScript: el esquema lo impide en tres capas. `role_permissions_domain_match` (CHECK) y la FK compuesta `(permission_id, permission_domain)` solo admiten permisos del dominio del rol o `shared`; `permissions_guard` hace inmutables clave, dominio y `is_authority`; y `role_permissions_guard` impide `UPDATE`. Por eso la corrección no relaja ninguna guarda: crea un permiso **nuevo** del dominio escolar.
+
+**Migración 0006** (`0006_catalog_rbac_school_management.sql`; **preparada, probada y NO aplicada en `eta15_dev`**): crea `catalog:manage_school` (dominio `school`, no de autoridad) y se lo concede a `direccion`; quita `catalog:manage` a `admin_tecnico` y `catalog:read` a `prefectura`, `trabajo_social` y `control_acceso`. El permiso técnico `catalog:manage` queda definido y **sin asignar** (reservado; retirarlo es una limpieza futura opcional). No toca 0000–0005, no crea usuarios ni borra roles o permisos, y termina con una verificación que revierte toda la migración si el resultado no es el esperado. Lleva la marca `-- eta15:allow-destructive` solo porque las bajas de asignaciones son `DELETE`; es idempotente. Cada alta/baja queda auditada por el trigger `role_permissions_audit` (**5 eventos `role.permissions_changed`** sin actor; al aplicarla, `audit_events` de `eta15_dev` pasará de 0 a 5 filas, lo esperado). Pruebas: `test/catalog-rbac.migration.test.ts` (incremental desde 0005), `test/auth-seed.test.ts` (el catálogo en código coincide con la base tras 0006) y las suites HTTP.
+
+> **Decisión que ratifica la institución (D-CAT)**: (1) que solo Dirección administre el catálogo; (2) retirar la lectura global a prefectura, trabajo social y control de acceso hasta que haya requerimiento. Ambas son reversibles con una migración nueva.
+
+**Privilegios de PostgreSQL**: `eta15_api` solo tiene `SELECT` sobre `school_years` y `groups` (ver [roles-postgresql.md](roles-postgresql.md)). Las lecturas funcionan hoy; las escrituras necesitan la propuesta `tools/db/privileges/0002-school-catalog-write.proposal.sql`, ahora **por columna también en `INSERT`** (solo las columnas que usan los servicios: ciclos `name, starts_on, ends_on`; grupos `school_year_id, grade, code, shift, expected_entry_time`; `UPDATE` de ciclos `name, starts_on, ends_on, is_active` y de grupos `code, shift, expected_entry_time, is_active`). Quedan fuera `id`, `created_at`, `updated_at` (los fijan el `DEFAULT` y el trigger), `is_active` en el alta y, en `UPDATE`, `school_year_id` y `grade`; nunca `DELETE`, `TRUNCATE`, `REFERENCES`, `TRIGGER`, `CREATE` ni escritura sobre `role_permissions`, `permissions` o `roles`. Es idempotente y reversible, y trae un verificador de solo lectura (`0002-school-catalog-write.verify.sql`) que evalúa conjuntamente los privilegios de tabla y de columna y falla con una excepción si difieren de lo esperado. **No está aplicada** (la primera línea es `\quit`). Sin ella, cada mutación responde **503 `CATALOG_WRITE_UNAVAILABLE`** con un mensaje genérico y no cambia nada; la API nunca amplía privilegios por su cuenta.
+
+**Pasos exactos para habilitar el catálogo en `eta15_dev`** (requieren autorización explícita; ninguno se ha ejecutado):
+
+1. Ratificar la política (D-CAT) y fusionar la rama (o decidir hacerlo).
+2. Preflight de solo lectura: `pnpm db:whoami`, 6 migraciones registradas, `role_permissions` con la semilla 0004.
+3. Respaldo `pg_dump -Fc` fuera del repo y `pg_restore --list` para verificarlo.
+4. `pnpm db:check` y `pnpm db:migrate` (envoltorio protegido): aplica **solo 0006**. Verificar con consultas de catálogo: `catalog:manage_school` solo en `direccion`, 5 filas en `audit_events`, 0 usuarios.
+5. Privilegios: ejecutar los 4 `GRANT` de `0002-school-catalog-write.proposal.sql` como `eta15_app` (sin la línea `\quit`) y luego `psql -v ON_ERROR_STOP=1 -f 0002-school-catalog-write.verify.sql`; guardar su salida.
+6. Reiniciar la API y comprobar con una cuenta de Dirección (antes hay que hacer el bootstrap escolar, hoy bloqueado por D-ESC) que crear un ciclo responde 201 y que `admin_tecnico` recibe 403.
+
+**Interfaz** (`/catalogo`, enlace "Catálogo escolar" solo con `catalog:read`): pestañas "Ciclos escolares" y "Grupos"; filtros por ciclo (el vigente por defecto), grado, turno (incluye "sin turno"), estado y búsqueda de código; paginación; formularios con validación previa y errores por campo (el foco pasa al primer campo inválido y visible); confirmación para activar/desactivar; configuración de la hora de entrada por grupo (y opción de quitarla); los controles de escritura solo aparecen con `catalog:manage_school` (Dirección) y el servidor vuelve a autorizar todo. Sin tablero complejo, alumnos ni asistencia.
+
+**Pruebas**: contratos y servicio (validación, relevo de ciclos con "hoy" inyectado), HTTP en PGlite y en un clúster PostgreSQL 18 desechable (con y sin la propuesta 0002; incluye privilegios reales por SQL directo y 10 activaciones/altas simultáneas), 30 pruebas de componentes con `fetch` falso y una pasada manual en el navegador integrado (127.0.0.1:5173) contra `pnpm dev:sandbox -- --catalog-write`, con Dirección ficticia: crear ciclo, traslape rechazado, activar, crear grupos con horarios 07:00 y 07:50, duplicado rechazado, editar y quitar horario, desactivar, foco en errores y móvil de 375 px; prefectura (sin acceso) y admin_tecnico (solo lectura) comprobados también por API (403). `--catalog-write` aplica la propuesta 0002 **solo en el clúster desechable**.
+
 ## Constraints y por qué existen
 
 | Constraint                                           | Razón                                                                                                                                                                                                                                              |
@@ -137,7 +193,9 @@ UUID v7 generables en cliente y ordenados en el tiempo; `updated_at` por trigger
 - La contraseña local de `eta15_app` es corta (5 caracteres): cambiarla por una robusta (`\password eta15_app` y `tools\set-db-password.ps1`).
 - Las migraciones solo existen en `eta15_dev`; no hay procedimiento de aplicación en otros entornos todavía.
 - En producción las migraciones las aplicará un rol propietario distinto del rol de la API (ADR 0003).
-- Sin endpoints ni UI del catálogo.
+- Endpoints y UI del catálogo implementados en `feat/school-catalog-api`. Pendientes: ratificar D-CAT, aplicar **0006** y los privilegios **0002** en `eta15_dev` (autorización explícita, pasos arriba) y fusionar la rama.
+- Reglas con impacto funcional: (a) un ciclo futuro no puede activarse antes de su fecha de inicio, así que entre ciclos (p. ej. vacaciones) puede no haber ciclo vigente; el vigente que ya terminó sigue marcado hasta que Dirección lo desactive o active el siguiente; (b) corregir el grado o el ciclo de un grupo exige desactivarlo y crear otro; (c) un cambio de horario no conserva historial (ver snapshot en eventos de acceso).
+- La API no cambia `school_year_id` ni `grade` de un grupo, y con 0002 aplicada tampoco el rol de la API podría; `eta15_app` (propietario) sí, por diseño.
 
 ## Comandos
 

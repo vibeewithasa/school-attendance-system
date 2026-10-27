@@ -60,6 +60,11 @@ export function Layout() {
                 Personal
               </NavLink>
             )}
+            {permissionsOf(me).canViewCatalog && (
+              <NavLink to="/catalogo" className={navClass}>
+                Catálogo escolar
+              </NavLink>
+            )}
           </nav>
         )}
       </header>
