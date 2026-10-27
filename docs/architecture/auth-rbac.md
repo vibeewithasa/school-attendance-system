@@ -328,7 +328,7 @@ La excepción es **solo de desarrollo local con datos sintéticos**. Antes de us
 
 ## 12. Matriz de permisos
 
-> **Alumnos (módulo en desarrollo, no aplicado en `eta15_dev`)**: la semilla 0004 dio lectura global de alumnos a `trabajo_social` y `control_acceso` (columnas siguientes). La propuesta `tools/db/proposals/0008-students-rbac.proposal.sql` la retira (política cerrada por defecto); ver [modelo-alumnos-matriculas.md](modelo-alumnos-matriculas.md).
+> **Alumnos (migración 0008, aplicada en `eta15_dev` el 2026-10-27)**: la semilla 0004 dio lectura global de alumnos a `trabajo_social` y `control_acceso` (columnas siguientes, que muestran la semilla original). La migración `0008_students_rbac_policy` retiró esas tres asignaciones (política cerrada por defecto; 3 eventos de auditoría): hoy solo Dirección (`all`) y prefectura (`assigned_groups`, sin asignaciones reales) tienen permisos de alumnos; ver [modelo-alumnos-matriculas.md](modelo-alumnos-matriculas.md).
 
 `✓` todos · `G` grupos asignados · `B` datos básicos · `—` ninguno · `(A)` autoridad.
 

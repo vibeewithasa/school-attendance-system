@@ -122,6 +122,13 @@ async function main(): Promise<number> {
           `SELECT count(*)::int AS n FROM pg_proc WHERE pronamespace = 'public'::regnamespace`,
         )
       ).n,
+      rolePermissionMatrix: (
+        await ALL<{ k: string }>(
+          c,
+          `SELECT r.key || '|' || p.key || '|' || rp.scope AS k FROM role_permissions rp
+             JOIN roles r ON r.id = rp.role_id JOIN permissions p ON p.id = rp.permission_id ORDER BY 1`,
+        )
+      ).map((x) => x.k),
       studentsRbac: (
         await ALL<{ k: string }>(
           c,

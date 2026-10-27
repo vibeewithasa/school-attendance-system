@@ -314,6 +314,10 @@ describe('privilegios EFECTIVOS (catalogo, sin ejecutar DDL destructivo)', () =>
     // escritura del catalogo: SOLO por columna (0002 aplicada el 2026-10-26; ver el test de columnas exactas)
     school_years: [true, true, true, false],
     groups: [true, true, true, false],
+    // alumnos (0007 + propuesta 0003 aplicada el 2026-10-27): SELECT, INSERT y UPDATE solo por columna; jamas DELETE
+    students: [false, true, true, false], // SELECT solo por columna
+    enrollments: [false, true, true, false],
+    student_group_assignments: [false, true, true, false],
   };
   it('matriz exacta de SELECT/INSERT/UPDATE/DELETE por tabla', async () => {
     for (const [table, [s, i, u, d]] of Object.entries(matrix)) {
@@ -340,6 +344,69 @@ describe('privilegios EFECTIVOS (catalogo, sin ejecutar DDL destructivo)', () =>
       { t: 'school_years', p: 'INSERT', cols: 'ends_on,name,starts_on' },
       { t: 'school_years', p: 'UPDATE', cols: 'ends_on,is_active,name,starts_on' },
     ]);
+  });
+  it('alumnos: SELECT, INSERT y UPDATE exactamente por las columnas aprobadas, sin privilegio de tabla ni GRANT OPTION (0003)', async () => {
+    for (const table of ['students', 'enrollments', 'student_group_assignments']) {
+      for (const p of ['SELECT', 'INSERT', 'UPDATE'])
+        expect(await priv(table, p), `${table} ${p} de tabla`).toBe(false);
+    }
+    const r = await owner.query<{ t: string; p: string; cols: string }>(
+      `select table_name t, privilege_type p, string_agg(column_name, ',' order by column_name) cols
+         from information_schema.column_privileges
+        where grantee = 'eta15_api' and table_name in ('students','enrollments','student_group_assignments')
+          and privilege_type in ('SELECT','INSERT','UPDATE') and is_grantable = 'NO'
+        group by 1, 2 order by 1, 2`,
+    );
+    expect(r.rows).toEqual([
+      { t: 'enrollments', p: 'INSERT', cols: 'school_year_id,starts_on,student_id' },
+      {
+        t: 'enrollments',
+        p: 'SELECT',
+        cols: 'created_at,ends_on,id,school_year_id,starts_on,student_id,updated_at',
+      },
+      { t: 'enrollments', p: 'UPDATE', cols: 'ends_on' },
+      {
+        t: 'student_group_assignments',
+        p: 'INSERT',
+        cols: 'enrollment_id,group_id,school_year_id,starts_on',
+      },
+      {
+        t: 'student_group_assignments',
+        p: 'SELECT',
+        cols: 'created_at,ends_on,enrollment_id,group_id,id,school_year_id,starts_on',
+      },
+      { t: 'student_group_assignments', p: 'UPDATE', cols: 'ends_on' },
+      { t: 'students', p: 'INSERT', cols: 'family_name,given_names,school_code' },
+      {
+        t: 'students',
+        p: 'SELECT',
+        cols: 'created_at,family_name,given_names,id,is_active,school_code,updated_at',
+      },
+      { t: 'students', p: 'UPDATE', cols: 'family_name,given_names,is_active,school_code' },
+    ]);
+  });
+  it('el esquema extensions (btree_gist) no es accesible para la API', async () => {
+    const r = await owner.query<{ u: boolean; c: boolean }>(
+      `select has_schema_privilege('eta15_api','extensions','USAGE') as u, has_schema_privilege('eta15_api','extensions','CREATE') as c`,
+    );
+    expect(r.rows[0]).toEqual({ u: false, c: false });
+  });
+  it('politica RBAC de alumnos aplicada (0008): solo Direccion (all) y prefectura (assigned_groups); sin lectura global de trabajo social ni control de acceso', async () => {
+    const r = await owner.query<{ k: string }>(
+      `select r.key || '|' || p.key || '|' || rp.scope as k from role_permissions rp
+         join roles r on r.id = rp.role_id join permissions p on p.id = rp.permission_id
+        where p.key like 'students:%' or p.key like 'enrollments:%' order by 1`,
+    );
+    expect(r.rows.map((x) => x.k).sort()).toEqual(
+      [
+        'direccion|enrollments:manage|all',
+        'direccion|students:manage|all',
+        'direccion|students:read|all',
+        'direccion|students:read_basic|all',
+        'prefectura|students:read|assigned_groups',
+        'prefectura|students:read_basic|assigned_groups',
+      ].sort(),
+    );
   });
   it('nunca TRUNCATE, TRIGGER ni REFERENCES en ninguna tabla', async () => {
     for (const table of Object.keys(matrix)) {
