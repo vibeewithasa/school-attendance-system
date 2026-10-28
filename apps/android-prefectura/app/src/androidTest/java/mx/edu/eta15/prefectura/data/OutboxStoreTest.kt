@@ -673,4 +673,80 @@ class OutboxStoreTest {
         repo.setMark(draft, sid(deviceA, g1, s3), AttendanceMark.PRESENT)
         assertTrue(repo.observeOutbox(gid(deviceA, g1)).first()!!.unsealedChanges)
     }
+
+    // ------------------------------------------------------------------ fallos antes, durante y despues de la transaccion local
+
+    private fun draftUpdatedAt(draft: String) = scalar("SELECT updatedAtEpochMs FROM attendance_drafts WHERE id = '$draft'")
+
+    private fun markStatus(draft: String, student: String) = scalar("SELECT status FROM attendance_marks WHERE draftId = '$draft' AND studentId = '$student'")
+
+    @Test
+    fun siFallaLaIntencionAlGuardarUnaMarcaLaMarcaNoQuedaGuardada() = runBlocking<Unit> {
+        download()
+        val repo = repo(deviceA)
+        val draft = (repo.openTodayDraft(gid(deviceA, g1)) as OpenDraftResult.Ready).draftId
+        val updatedBefore = draftUpdatedAt(draft)
+        // DURANTE: la marca ya se escribio dentro de la transaccion cuando falla la creacion de la intencion
+        sql("CREATE TRIGGER t_fail_insert BEFORE INSERT ON sync_operations BEGIN SELECT RAISE(ABORT, 'fallo simulado'); END")
+        assertThrows(Exception::class.java) { runBlocking { repo.setMark(draft, sid(deviceA, g1, s1), AttendanceMark.PRESENT) } }
+        sql("DROP TRIGGER t_fail_insert")
+        assertNull(markStatus(draft, sid(deviceA, g1, s1))) // sigue Pendiente: nada a medias
+        assertEquals(updatedBefore, draftUpdatedAt(draft))
+        assertTrue(ops().isEmpty())
+        // DESPUES: el mismo cambio funciona cuando la causa desaparece (no quedo ningun residuo bloqueante)
+        assertEquals(SetMarkResult.Saved, repo.setMark(draft, sid(deviceA, g1, s1), AttendanceMark.PRESENT))
+        assertEquals("PRESENT", markStatus(draft, sid(deviceA, g1, s1)))
+        assertEquals(1, ops().size)
+    }
+
+    @Test
+    fun siFallaElRetiroDeLaIntencionLaMarcaNoCambia() = runBlocking<Unit> {
+        download()
+        val repo = repo(deviceA)
+        val draft = (repo.openTodayDraft(gid(deviceA, g1)) as OpenDraftResult.Ready).draftId
+        repo.setMark(draft, sid(deviceA, g1, s1), AttendanceMark.PRESENT)
+        sql("CREATE TRIGGER t_fail_delete BEFORE DELETE ON sync_operations BEGIN SELECT RAISE(ABORT, 'fallo simulado'); END")
+        assertThrows(Exception::class.java) { runBlocking { repo.setMark(draft, sid(deviceA, g1, s1), null) } }
+        sql("DROP TRIGGER t_fail_delete")
+        assertEquals("PRESENT", markStatus(draft, sid(deviceA, g1, s1))) // la marca anterior sigue
+        assertEquals(1, ops().size) // y la intencion tambien
+        assertEquals(SetMarkResult.Saved, repo.setMark(draft, sid(deviceA, g1, s1), null))
+        assertTrue(ops().isEmpty())
+    }
+
+    @Test
+    fun siFallaElUltimoPasoDelSelladoNoQuedaOpenNiPayloadNiIntencionSellada() = runBlocking<Unit> {
+        download()
+        val repo = repo(deviceA)
+        val draft = capture(repo)
+        val before = ops()
+        assertEquals(1, before.size) // solo la intencion
+        // DURANTE (ultimo paso): la operacion OPEN, el payload y el sellado ya se escribieron cuando falla el cambio de estado final
+        sql("CREATE TRIGGER t_fail_state BEFORE UPDATE OF state ON sync_operations BEGIN SELECT RAISE(ABORT, 'fallo simulado'); END")
+        assertEquals(PrepareResult.LocalError, repo.prepareForSync(draft))
+        sql("DROP TRIGGER t_fail_state")
+        assertEquals(before, ops()) // ni OPEN, ni requestId, ni estado distinto
+        assertEquals("0", scalar("SELECT COUNT(*) FROM sync_operation_marks"))
+        assertNull(ops().single().requestId)
+        assertEquals(2, db.openHelper.readableDatabase.query("SELECT COUNT(*) FROM attendance_marks WHERE draftId = '$draft' AND status IS NOT NULL").use { it.moveToFirst(); it.getInt(0) })
+        // DESPUES: sin la causa, preparar funciona una sola vez
+        val ok = prepared(repo, draft)
+        assertEquals(2, ops().size)
+        assertEquals(ok.requestId, ops().single { it.kind == "SAVE_MARKS" }.requestId)
+        assertTrue(repo.prepareForSync(draft) is PrepareResult.AlreadyPrepared)
+    }
+
+    @Test
+    fun preparaSinBorradorOConPerfilAjenoNoEscribeNada() = runBlocking<Unit> {
+        download()
+        download(deviceB)
+        val a = repo(deviceA)
+        val draftA = capture(a)
+        val before = ops()
+        // ANTES de la transaccion: el borrador no existe o es de otro perfil
+        assertEquals(PrepareResult.DraftNotFound, a.prepareForSync("no-existe"))
+        assertEquals(PrepareResult.DraftNotFound, repo(deviceB).prepareForSync(draftA))
+        assertEquals(before, ops())
+        assertEquals("0", scalar("SELECT COUNT(*) FROM sync_operation_marks"))
+    }
 }

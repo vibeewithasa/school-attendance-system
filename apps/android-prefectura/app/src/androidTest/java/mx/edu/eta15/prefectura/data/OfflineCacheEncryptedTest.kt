@@ -219,4 +219,36 @@ class OfflineCacheEncryptedTest {
             db.close()
         }
     }
+
+    @Test
+    fun unaTransaccionRevertidaNoDejaNadaAlReabrirLaBaseCifrada() = runBlocking<Unit> {
+        val profile = SandboxIds.profile(device)
+        val group = SandboxIds.group(profile, g1)
+        val db1 = storage.open()
+        OfflineCacheStore(db1, clock, policy).commit(spec())
+        val repo1 = LocalAttendanceRepository(db1, profile, clock, access = ProfileAccessGate(db1, profile, clock, policy))
+        val draft = (repo1.openTodayDraft(group) as OpenDraftResult.Ready).draftId
+        assertEquals(SetMarkResult.Saved, repo1.setMark(draft, SandboxIds.student(group, s1), AttendanceMark.PRESENT)) // confirmado
+        val confirmedOps = db1.outboxDao().count(profile)
+        // una transaccion a mitad: cambios escritos pero NUNCA confirmados (la muerte real del proceso se prueba en el E2E: fases crash-*)
+        val raw = db1.openHelper.writableDatabase
+        raw.beginTransaction()
+        raw.execSQL("UPDATE attendance_marks SET status = 'ABSENT' WHERE draftId = '$draft' AND studentId = '${SandboxIds.student(group, s2)}'")
+        raw.execSQL("UPDATE attendance_marks SET status = 'ABSENT' WHERE draftId = '$draft' AND studentId = '${SandboxIds.student(group, s1)}'")
+        raw.endTransaction() // sin setTransactionSuccessful: se revierte todo
+        db1.close()
+
+        val db2 = storage.open()
+        try {
+            val repo2 = LocalAttendanceRepository(db2, profile, clock, access = ProfileAccessGate(db2, profile, clock, policy))
+            val rows = repo2.observeTodayDraft(group).first()!!.rows
+            assertEquals(listOf(AttendanceMark.PRESENT, null), rows.map { it.mark }) // solo lo confirmado
+            assertEquals(confirmedOps, db2.outboxDao().count(profile))
+            // y la app sigue pudiendo capturar y preparar con normalidad
+            assertEquals(SetMarkResult.Saved, repo2.setMark(draft, SandboxIds.student(group, s2), AttendanceMark.ABSENT))
+            assertTrue(repo2.prepareForSync(draft) is PrepareResult.Prepared)
+        } finally {
+            db2.close()
+        }
+    }
 }

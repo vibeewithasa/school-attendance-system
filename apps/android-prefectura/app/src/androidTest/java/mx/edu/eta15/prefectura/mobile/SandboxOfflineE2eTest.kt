@@ -47,6 +47,8 @@ import org.junit.runner.RunWith
  *   offline       -> SIN red: comprueba que no hay internet, abre grupos y padron locales, marca Presente/Ausente y deja Pendientes.
  *   persist       -> proceso nuevo: la captura sigue ahi.
  *   prepare       -> SIN red: "Preparar para sincronizar" sella la operacion en la outbox local (esquema Room v3). No envia nada.
+ *   crash-open    -> SIN red: abre una transaccion SQL, escribe una marca SIN confirmar y se queda esperando: el guion mata el proceso.
+ *   crash-verify  -> proceso nuevo: lo no confirmado NO existe, lo confirmado si, la integridad de la base es correcta y se sigue operando.
  *   persist-outbox-> proceso nuevo: la operacion preparada sigue ahi, intacta; preparar de nuevo no la duplica.
  *   reconnect     -> con red: vuelve a descargar (`-e expectRevoked N`): detecta cambios de autorizacion sin perder borradores.
  *   isolation     -> otro perfil descargado: la cache de una identidad no es visible desde la otra.
@@ -113,6 +115,8 @@ class SandboxOfflineE2eTest {
                 "persist" -> persist(db)
                 "prepare" -> prepare(db)
                 "persist-outbox" -> persistOutbox(db)
+                "crash-open" -> crashOpen(db)
+                "crash-verify" -> crashVerify(db)
                 "reconnect" -> reconnect(db)
                 "isolation" -> isolation(db)
                 else -> throw AssertionError("fase desconocida: $phase")
@@ -227,6 +231,41 @@ class SandboxOfflineE2eTest {
         val draft = repo.observeTodayDraft(group.id).first()!!
         assertTrue("preparar otra vez no duplica", repo.prepareForSync(draft.draftId) is PrepareResult.AlreadyPrepared)
         assertEquals(2, db.outboxDao().count(profile))
+    }
+
+    private suspend fun crashOpen(db: EtaDatabase) {
+        val profile = profileOfLink()
+        val repo = repo(db, profile)
+        val group = repo.observeGroups().first().first()
+        val draft = repo.observeTodayDraft(group.id).first()!!
+        val pending = draft.rows.first { it.mark == null }.student.id
+        val raw = db.openHelper.writableDatabase
+        raw.beginTransaction()
+        raw.execSQL("UPDATE attendance_marks SET status = 'PRESENT', markedAtEpochMs = 1 WHERE draftId = '${draft.draftId}' AND studentId = '$pending'")
+        raw.execSQL("UPDATE attendance_drafts SET updatedAtEpochMs = updatedAtEpochMs + 1 WHERE id = '${draft.draftId}'")
+        say("CRASH-OPEN transaction=abierta sinConfirmar=1")
+        Thread.sleep(120_000) // el guion externo mata el proceso mientras la transaccion sigue abierta
+    }
+
+    private suspend fun crashVerify(db: EtaDatabase) {
+        val profile = profileOfLink()
+        val repo = repo(db, profile)
+        val group = repo.observeGroups().first().first()
+        val draft = repo.observeTodayDraft(group.id).first()!!
+        val s = draft.summary
+        val integrity = db.openHelper.readableDatabase.query("PRAGMA integrity_check").use { it.moveToFirst(); it.getString(0) }
+        val ops = db.outboxDao().allOf(profile)
+        say("CRASH-VERIFY present=${s.present} absent=${s.absent} pending=${s.pending} ops=${ops.size} integrity=$integrity")
+        assertEquals("ok", integrity)
+        assertEquals(1, s.present) // la marca sin confirmar NO existe
+        assertEquals(1, s.absent)
+        assertEquals(3, s.pending)
+        assertEquals(2, ops.size)
+        assertTrue("la operacion preparada sigue intacta", ops.single { it.kind == "SAVE_MARKS" }.markCount == 2)
+        // y la app sigue operando
+        val pending = draft.rows.first { it.mark == null }.student.id
+        assertEquals(SetMarkResult.Saved, repo.setMark(draft.draftId, pending, AttendanceMark.PRESENT))
+        assertEquals(SetMarkResult.Saved, repo.setMark(draft.draftId, pending, null))
     }
 
     private suspend fun reconnect(db: EtaDatabase) {
