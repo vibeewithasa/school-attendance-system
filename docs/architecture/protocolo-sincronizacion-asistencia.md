@@ -709,7 +709,7 @@ El `requestId`, el payload, el hash, la fecha escolar y su procedencia se sellan
 
 ### 21.4 Lo que NO existe
 
-Cliente HTTP de asistencia, `WorkManager`, reintentos, resolución de `409`, finalización móvil, capturas históricas y correcciones. El E2E contra el sandbox registró **0** peticiones `/attendance`; el release no declara `INTERNET`.
+Cliente HTTP de asistencia, `WorkManager`, reintentos, resolución de `409`, finalización móvil, capturas históricas y correcciones **en esta fase** (el transporte manual llega en §22). El E2E contra el sandbox registró **0** peticiones `/attendance`; el release no declara `INTERNET`.
 
 ### 21.5 Contrato pendiente para la fase de transporte
 
@@ -717,6 +717,37 @@ Cliente HTTP de asistencia, `WorkManager`, reintentos, resolución de `409`, fin
 2. Cliente `SAVE_MARKS` con `requestId` y `expectedRevision`; recibos `replayed` idempotentes; `409` → `CONFLICT`/`NEEDS_REVIEW`.
 3. Programador de segundo plano con reintentos acotados y reglas de red; `AUTH_REQUIRED` al expirar la sesión móvil.
 4. Decisiones institucionales pendientes (§16.B): capturas tardías, listas finalizadas y conservación local. Ninguna se asume.
+
+## 22. Fase 4: transporte HTTP MANUAL de asistencia desde Android (IMPLEMENTADO solo en el build debug contra el sandbox)
+
+Rama `feat/android-manual-sync-sandbox`, apilada sobre el PR #7 → #6 → #5 → #4 → #3 → #2 (todos Draft). Cierra el primer circuito: tomar lista sin internet y enviarla **manualmente** al recuperar la conexión. **No cambia el backend, PostgreSQL ni `eta15_dev`**; ADR 0005 y 0006 siguen **PROPUESTOS**. Detalle de la implementación, de las decisiones y de las pruebas: [android-prefectura.md](android-prefectura.md) (sección «Transporte manual de asistencia»).
+
+### 22.1 Cómo cumple el diseño (§§ 7, 13 y 19)
+
+| Concepto del diseño                       | En Android                                                                                                                                                                                                                                        |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `open` antes de `saveMarks`               | Un ciclo consulta «hoy» (`GET today`); si la lista existe la reutiliza sin escribir, si no la abre (`POST days`). El recibo (`dayId`, revisión) se persiste en Room.                                                                              |
+| `requestId` estable e identidad inmutable | Los sella «Preparar» (UUID, payload mínimo, huella `marksHash`); el transporte **solo reenvía** lo sellado. `dayId` y `expectedRevision` se completan antes de enviar y no son parte de la identidad.                                             |
+| Resultado desconocido                     | `SENDING` se persiste antes de la petición; red caída, timeout, muerte del proceso, cancelación o fallo de Room al guardar el recibo → `RETRYABLE_ERROR`. El siguiente ciclo **manual** reenvía lo mismo y el servidor responde `replayed: true`. |
+| Conflicto (`expectedRevision`)            | Antes de enviar se compara la lista fresca con lo último confirmado por el dispositivo; si cambió o hay marcas ajenas distintas → `CONFLICT` **sin enviar**; un `409 REVISION_CONFLICT` también. Nunca se resuelve solo ni se sobrescribe.        |
+| Pendiente no es borrar                    | El payload solo lleva marcas explícitas; una marca confirmada no vuelve a Pendiente.                                                                                                                                                              |
+| Fecha                                     | La autoridad es el `schoolToday` del servidor; fecha distinta o histórica → `NEEDS_REVIEW`; solo se **verifica** (repite) un envío anterior de resultado desconocido, nunca se crea uno histórico nuevo.                                          |
+
+### 22.2 Activación y seguridad
+
+Solo en `src/debug`; en release no existe el motor, el cliente HTTP, DPoP ni el botón (el `classes.dex` de release no los contiene) y el manifiesto sigue sin `INTERNET`. Requiere vinculación, clave en el Keystore, perfil del mismo dispositivo y las opciones `mobile.attendanceRead` y `mobile.attendanceWrite` del servidor de pruebas. Nada la dispara salvo la pulsación de «Sincronizar ahora»; un solo ciclo a la vez; cancelable. Una prueba DPoP nueva por petición; el `requestId` no se confunde con el `jti`.
+
+### 22.3 Lo que NO existe
+
+Sincronización automática, `WorkManager`, finalización móvil, capturas históricas, correcciones, resolución de conflictos o de `NEEDS_REVIEW` (la política es conservadora y requiere una decisión de la escuela), producción y datos reales.
+
+### 22.4 Resultados (datos ficticios)
+
+JVM 159 (debug) y 70 (release), instrumentadas 172 y **E2E 51/51** contra el servidor de pruebas con PostgreSQL 18 desechable: **9 GET y 4 POST** de asistencia en todo el escenario (1 OPEN + 3 SAVE_MARKS: envío, envío con respuesta perdida y su repetición idempotente), cero duplicados en el servidor, cero respuestas 401, **0 peticiones al recuperar la conexión sin pulsar nada**. Ver el detalle en android-prefectura.md.
+
+### 22.5 Pendiente
+
+Política institucional para `NEEDS_REVIEW`/`CONFLICT` (quién y cómo los resuelve), capturas tardías, conservación local, una sincronización automática (con su propio ADR y pruebas), finalización móvil y la aprobación de los ADR 0005 y 0006.
 
 ## Qué cubre y qué no este diseño
 

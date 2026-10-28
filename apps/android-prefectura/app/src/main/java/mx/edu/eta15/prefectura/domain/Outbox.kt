@@ -62,12 +62,15 @@ object OutboxTransitions {
             OperationState.WAITING_REMOTE_CONTEXT, OperationState.READY, OperationState.NEEDS_REVIEW,
             OperationState.SUPERSEDED, OperationState.DISCARDED,
         ),
+        // CONFLICT desde WAITING_REMOTE_CONTEXT y READY: el transporte manual detecta ANTES de enviar que la lista del servidor cambio
+        // (revision distinta, marcas de otra persona, lista finalizada). No se resuelve solo: se conserva hasta una decision de la persona.
         OperationState.WAITING_REMOTE_CONTEXT to setOf(
-            OperationState.READY, OperationState.NEEDS_REVIEW, OperationState.SUPERSEDED, OperationState.DISCARDED,
+            OperationState.READY, OperationState.NEEDS_REVIEW, OperationState.CONFLICT, OperationState.SUPERSEDED,
+            OperationState.DISCARDED,
         ),
         OperationState.READY to setOf(
             OperationState.SENDING, OperationState.WAITING_REMOTE_CONTEXT, OperationState.AUTH_REQUIRED,
-            OperationState.NEEDS_REVIEW, OperationState.SUPERSEDED, OperationState.DISCARDED,
+            OperationState.NEEDS_REVIEW, OperationState.CONFLICT, OperationState.SUPERSEDED, OperationState.DISCARDED,
         ),
         OperationState.SENDING to setOf(
             OperationState.ACKNOWLEDGED, OperationState.RETRYABLE_ERROR, OperationState.AUTH_REQUIRED,
@@ -104,6 +107,35 @@ object OutboxReasons {
     const val RESULT_UNKNOWN_AFTER_RESTART = "RESULT_UNKNOWN_AFTER_RESTART"
     const val DEVICE_REVOKED = "DEVICE_REVOKED"
     const val ACCOUNT_BLOCKED = "ACCOUNT_BLOCKED"
+
+    // ------------------------------------------------------------------------------ transporte manual (sandbox)
+    /** La fecha escolar del servidor no es la de la operacion (el telefono o la captura estan en otro dia). */
+    const val DATE_MISMATCH = "DATE_MISMATCH"
+    const val NOT_SCHOOL_DAY = "NOT_SCHOOL_DAY"
+
+    /** El servidor ya no lista el grupo entre los asignados de hoy. */
+    const val GROUP_NOT_ASSIGNED = "GROUP_NOT_ASSIGNED"
+    const val DAY_FINALIZED = "DAY_FINALIZED"
+
+    /** La lista del servidor cambio desde lo ultimo que este dispositivo confirmo. */
+    const val REVISION_CHANGED = "REVISION_CHANGED"
+
+    /** El servidor ya tiene otra marca (de otra persona) para un alumno que este dispositivo nunca escribio. */
+    const val DIVERGENT_MARKS = "DIVERGENT_MARKS"
+    const val IDEMPOTENCY_MISMATCH = "IDEMPOTENCY_MISMATCH"
+
+    /** La respuesta del servidor no corresponde a lo que se envio. */
+    const val ACK_MISMATCH = "ACK_MISMATCH"
+    const val FORBIDDEN = "FORBIDDEN"
+    const val NOT_FOUND = "NOT_FOUND"
+    const val INVALID_REQUEST = "INVALID_REQUEST"
+    const val RATE_LIMITED = "RATE_LIMITED"
+    const val UNAVAILABLE = "UNAVAILABLE"
+    const val NETWORK = "NETWORK"
+    const val SESSION_REQUIRED = "SESSION_REQUIRED"
+
+    /** El ciclo se cancelo con una peticion en vuelo: el resultado es desconocido. */
+    const val CANCELLED_UNKNOWN = "CANCELLED_UNKNOWN"
 }
 
 /** De donde salio la certeza de la fecha del borrador al sellar la operacion. El reloj del telefono NO es autoridad escolar. */

@@ -58,6 +58,46 @@ import mx.edu.eta15.prefectura.ui.InfoNotice
 object MobileFeature {
     const val AVAILABLE = true
 
+    /**
+     * Sincronizacion MANUAL de asistencia de un perfil descargado (SANDBOX). Solo existe si el dispositivo esta vinculado, su clave
+     * sigue en el Keystore y el perfil es el de ESE dispositivo (la identidad sale del registro local, no de la interfaz).
+     */
+    fun manualSync(
+        context: Context,
+        db: mx.edu.eta15.prefectura.data.local.EtaDatabase,
+        clock: java.time.Clock,
+        ids: mx.edu.eta15.prefectura.domain.IdGenerator,
+        profileId: String,
+        policy: mx.edu.eta15.prefectura.domain.OfflinePolicy,
+        scope: kotlinx.coroutines.CoroutineScope,
+    ): mx.edu.eta15.prefectura.domain.ManualSync {
+        val linkStore = FileLinkStore(context.applicationContext.noBackupFilesDir)
+        val deviceId = linkStore.load()?.deviceId ?: return mx.edu.eta15.prefectura.domain.NoManualSync
+        if (SandboxIds.profile(deviceId) != profileId) return mx.edu.eta15.prefectura.domain.NoManualSync
+        val key = AndroidDeviceKey()
+        val jwk = try {
+            if (!key.exists()) return mx.edu.eta15.prefectura.domain.NoManualSync
+            key.publicJwk()
+        } catch (_: DeviceKeyException) {
+            return mx.edu.eta15.prefectura.domain.NoManualSync
+        }
+        val repo = mx.edu.eta15.prefectura.data.LocalAttendanceRepository(
+            db, profileId, clock, ids,
+            access = mx.edu.eta15.prefectura.data.ProfileAccessGate(db, profileId, clock, policy),
+        )
+        val http = HttpMobileApi(BuildConfig.MOBILE_BASE_URL, DpopProofBuilder(jwk, key::signDer), jwk)
+        val store = RoomSyncStore(
+            store = mx.edu.eta15.prefectura.data.OutboxStore(db, clock, ids),
+            profileId = profileId,
+            deviceId = deviceId,
+            cache = mx.edu.eta15.prefectura.data.OfflineCacheStore(db, clock, policy),
+            schoolToday = repo::schoolToday,
+            prepare = { draftId -> repo.prepareForSync(draftId) },
+        )
+        val identity = SyncIdentity { linkStore.load()?.deviceId?.takeIf { runCatching { key.exists() }.getOrDefault(false) } }
+        return DebugManualSync(scope, ManualSyncEngine(profileId, store, http, DeviceSyncSessions(http, clock), identity))
+    }
+
     @Composable
     fun HomeEntry(onOpen: () -> Unit) {
         OutlinedButton(

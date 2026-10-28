@@ -22,7 +22,10 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
 import mx.edu.eta15.prefectura.R
+import androidx.compose.material3.Button
 import mx.edu.eta15.prefectura.domain.AccessBlock
+import mx.edu.eta15.prefectura.domain.ManualSyncState
+import mx.edu.eta15.prefectura.domain.SyncResultKind
 import mx.edu.eta15.prefectura.domain.OfflineAccess
 import mx.edu.eta15.prefectura.domain.OperationKind
 import mx.edu.eta15.prefectura.domain.OperationState
@@ -120,10 +123,18 @@ fun OutboxSection(
     enabled: Boolean,
     onPrepare: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Solo en el build de pruebas con el servidor de sandbox: estado del ciclo manual y su accion. */
+    syncAvailable: Boolean = false,
+    sync: ManualSyncState = ManualSyncState(),
+    onSync: () -> Unit = {},
+    onCancelSync: () -> Unit = {},
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = modifier.testTag("outbox-section")) {
         Text(stringResource(R.string.outbox_title), style = MaterialTheme.typography.titleMedium)
-        InfoNotice(stringResource(R.string.outbox_local_notice), Modifier.testTag("outbox-local-notice"))
+        InfoNotice(
+            stringResource(if (syncAvailable) R.string.outbox_local_notice_sync else R.string.outbox_local_notice),
+            Modifier.testTag("outbox-local-notice"),
+        )
         Text(stringResource(R.string.outbox_marks, outbox.localMarks), modifier = Modifier.testTag("outbox-marks"))
         Text(
             stringResource(if (outbox.unsealedChanges) R.string.outbox_unsealed else R.string.outbox_all_prepared),
@@ -140,8 +151,12 @@ fun OutboxSection(
                 when (op.state) {
                     OperationState.READY -> R.string.outbox_state_ready
                     OperationState.WAITING_REMOTE_CONTEXT -> R.string.outbox_state_waiting
-                    OperationState.NEEDS_REVIEW, OperationState.CONFLICT -> R.string.outbox_state_review
+                    OperationState.NEEDS_REVIEW -> R.string.outbox_state_review
+                    OperationState.CONFLICT -> R.string.outbox_state_conflict
                     OperationState.AUTH_REQUIRED -> R.string.outbox_state_auth
+                    OperationState.SENDING -> R.string.outbox_state_sending
+                    OperationState.ACKNOWLEDGED -> R.string.outbox_state_acked
+                    OperationState.RETRYABLE_ERROR -> R.string.outbox_state_retry
                     else -> R.string.outbox_state_other
                 },
             )
@@ -169,8 +184,42 @@ fun OutboxSection(
         }
         OutlinedButton(
             onClick = onPrepare,
-            enabled = enabled && outbox.unsealedChanges,
+            enabled = enabled && outbox.unsealedChanges && !sync.running,
             modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("outbox-prepare"),
         ) { Text(stringResource(R.string.outbox_prepare)) }
+        if (syncAvailable) {
+            sync.last?.let { report ->
+                InfoNotice(
+                    stringResource(
+                        when (report.kind) {
+                            SyncResultKind.CONFIRMED -> R.string.outbox_sync_confirmed
+                            SyncResultKind.NOTHING_TO_SEND -> R.string.outbox_sync_nothing
+                            SyncResultKind.OFFLINE -> R.string.outbox_sync_offline
+                            SyncResultKind.SESSION_REQUIRED -> R.string.outbox_sync_session
+                            SyncResultKind.TEMPORARY_ERROR -> R.string.outbox_sync_temporary
+                            SyncResultKind.CONFLICT -> R.string.outbox_sync_conflict
+                            SyncResultKind.NEEDS_REVIEW -> R.string.outbox_sync_review
+                            SyncResultKind.RESULT_UNKNOWN -> R.string.outbox_sync_unknown
+                            SyncResultKind.NOT_ENABLED -> R.string.outbox_sync_not_enabled
+                            SyncResultKind.CANCELLED -> R.string.outbox_sync_cancelled
+                            SyncResultKind.NOT_ALLOWED -> R.string.outbox_sync_not_allowed
+                        },
+                    ),
+                    Modifier.testTag("outbox-sync-result-" + report.kind.name),
+                )
+            }
+            if (sync.running) {
+                InfoNotice(stringResource(R.string.outbox_sync_running), Modifier.testTag("outbox-sync-running"))
+                OutlinedButton(
+                    onClick = onCancelSync,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("outbox-sync-cancel"),
+                ) { Text(stringResource(R.string.outbox_sync_cancel)) }
+            }
+            Button(
+                onClick = onSync,
+                enabled = enabled && !sync.running,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("outbox-sync-now"),
+            ) { Text(stringResource(R.string.outbox_sync_now)) }
+        }
     }
 }

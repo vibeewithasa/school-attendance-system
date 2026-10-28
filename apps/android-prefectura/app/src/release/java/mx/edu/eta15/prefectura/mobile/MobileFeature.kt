@@ -12,6 +12,18 @@ object MobileFeature {
     @Suppress("UNUSED_PARAMETER")
     fun sandboxProfileId(context: Context): String? = null
 
+    /** Sin transporte: en release la sincronizacion manual NO existe (ni cliente de red ni permiso de red). */
+    @Suppress("UNUSED_PARAMETER")
+    fun manualSync(
+        context: Context,
+        db: mx.edu.eta15.prefectura.data.local.EtaDatabase,
+        clock: java.time.Clock,
+        ids: mx.edu.eta15.prefectura.domain.IdGenerator,
+        profileId: String,
+        policy: mx.edu.eta15.prefectura.domain.OfflinePolicy,
+        scope: kotlinx.coroutines.CoroutineScope,
+    ): mx.edu.eta15.prefectura.domain.ManualSync = mx.edu.eta15.prefectura.domain.NoManualSync
+
     @Composable
     fun HomeEntry(onOpen: () -> Unit) = Unit
 

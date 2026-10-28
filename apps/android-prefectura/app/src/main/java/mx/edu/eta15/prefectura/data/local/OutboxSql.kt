@@ -42,6 +42,29 @@ internal object OutboxSql {
 
     private const val TERMINAL = "('ACKNOWLEDGED', 'SUPERSEDED', 'DISCARDED')"
 
+    private val NAME = Regex("""CREATE TRIGGER IF NOT EXISTS (\w+)""")
+    private val SPACES = Regex("""\s+""")
+
+    private fun normalized(sql: String) = sql.replace("IF NOT EXISTS ", "").trim().replace(SPACES, " ")
+
+    /**
+     * Reinstala SOLO los disparadores de la outbox cuyo texto cambio (o faltan): una regla corregida en una nueva version de la app
+     * no puede quedarse con la definicion anterior por el `IF NOT EXISTS`. Si todos coinciden no escribe NADA (abrir la base no la
+     * modifica).
+     */
+    fun reinstallChanged(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        val stored = HashMap<String, String>()
+        db.query("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'sync_%'").use { c ->
+            while (c.moveToNext()) stored[c.getString(0)] = c.getString(1).orEmpty()
+        }
+        for (sql in TRIGGERS) {
+            val name = NAME.find(sql)!!.groupValues[1]
+            if (stored[name]?.let { it.trim().replace(SPACES, " ") } == normalized(sql)) continue
+            db.execSQL("DROP TRIGGER IF EXISTS $name")
+            db.execSQL(sql)
+        }
+    }
+
     val TRIGGERS: List<String> = listOf(
         // ------------------------------------------------------------------------------------------------ alta de una operacion
         """

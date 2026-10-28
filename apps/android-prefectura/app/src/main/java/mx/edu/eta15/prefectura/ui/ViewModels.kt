@@ -26,6 +26,9 @@ import mx.edu.eta15.prefectura.domain.AttendanceRepository
 import mx.edu.eta15.prefectura.domain.DraftState
 import mx.edu.eta15.prefectura.domain.Group
 import mx.edu.eta15.prefectura.domain.OpenDraftResult
+import mx.edu.eta15.prefectura.domain.ManualSync
+import mx.edu.eta15.prefectura.domain.ManualSyncState
+import mx.edu.eta15.prefectura.domain.NoManualSync
 import mx.edu.eta15.prefectura.domain.OutboxSummary
 import mx.edu.eta15.prefectura.domain.PrepareResult
 import mx.edu.eta15.prefectura.domain.Refusal
@@ -221,6 +224,9 @@ sealed interface SummaryUiState {
         val draft: DraftState,
         val outbox: OutboxSummary? = null,
         val prepareMessage: PrepareMessage? = null,
+        /** Solo el build de pruebas con el servidor de sandbox ofrece "Sincronizar ahora". */
+        val syncAvailable: Boolean = false,
+        val sync: ManualSyncState = ManualSyncState(),
     ) : SummaryUiState
 
     data object Error : SummaryUiState
@@ -232,12 +238,22 @@ enum class PrepareMessage {
     LocalError, NotSandbox, DraftNotFound,
 }
 
-class SummaryViewModel(private val repo: AttendanceRepository, groupId: String) : ViewModel() {
+class SummaryViewModel(
+    private val repo: AttendanceRepository,
+    private val groupId: String,
+    private val sync: ManualSync = NoManualSync,
+) : ViewModel() {
     private val message = MutableStateFlow<PrepareMessage?>(null)
 
     val state: StateFlow<SummaryUiState> =
-        combine(repo.observeTodayDraft(groupId), repo.observeOutbox(groupId), message) { d, outbox, msg ->
-            if (d == null) SummaryUiState.NoDraft else SummaryUiState.Ready(d, outbox, msg)
+        combine(repo.observeTodayDraft(groupId), repo.observeOutbox(groupId), message, sync.state) { d, outbox, msg, syncState ->
+            if (d == null) {
+                SummaryUiState.NoDraft
+            } else {
+                // El estado del ciclo solo se muestra en el grupo al que pertenece.
+                val mine = if (syncState.groupId == groupId) syncState else ManualSyncState(running = false)
+                SummaryUiState.Ready(d, outbox, msg, syncAvailable = sync.available, sync = mine.copy(running = syncState.running))
+            }
         }
             .catch { emit(SummaryUiState.Error) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), SummaryUiState.Loading)
@@ -272,6 +288,14 @@ class SummaryViewModel(private val repo: AttendanceRepository, groupId: String) 
     fun consumePrepareMessage() {
         message.value = null
     }
+
+    /** Accion EXPLICITA de la persona: inicia UN ciclo manual para este grupo. Nada mas inicia un envio. */
+    fun syncNow() {
+        message.value = null
+        sync.syncNow(groupId)
+    }
+
+    fun cancelSync() = sync.cancel()
 }
 
 // ---------- Conectividad y sincronizacion ----------

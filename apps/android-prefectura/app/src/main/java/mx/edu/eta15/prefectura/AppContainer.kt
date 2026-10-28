@@ -25,6 +25,9 @@ import mx.edu.eta15.prefectura.demo.DEMO_PROFILE_ID
 import mx.edu.eta15.prefectura.demo.DemoMode
 import mx.edu.eta15.prefectura.demo.NO_SESSION_PROFILE_ID
 import mx.edu.eta15.prefectura.domain.AttendanceRepository
+import mx.edu.eta15.prefectura.domain.ManualSync
+import mx.edu.eta15.prefectura.domain.NoManualSync
+import mx.edu.eta15.prefectura.mobile.MobileFeature
 import mx.edu.eta15.prefectura.domain.IdGenerator
 import mx.edu.eta15.prefectura.domain.RemoteDataSource
 import mx.edu.eta15.prefectura.domain.UnavailableRemoteDataSource
@@ -61,6 +64,23 @@ class AppContainer(
 
     @Volatile
     private var db: EtaDatabase? = null
+
+    /** Contexto de la aplicacion (solo para el transporte de PRUEBAS del build debug; `null` en pruebas sin Android). */
+    private var appContext: Context? = null
+    private val syncs = HashMap<String, ManualSync>()
+
+    /**
+     * Sincronizacion MANUAL de asistencia de un perfil descargado (SANDBOX). En release y en pruebas sin contexto no existe
+     * ([NoManualSync]); en debug la crea `MobileFeature`. Un ciclo solo lo inicia una persona con "Sincronizar ahora".
+     */
+    fun manualSync(profileId: String): ManualSync {
+        val database = db ?: return NoManualSync
+        val context = appContext ?: return NoManualSync
+        // UN solo motor por perfil: dos pantallas nunca abren dos ciclos a la vez.
+        synchronized(syncs) {
+            return syncs.getOrPut(profileId) { MobileFeature.manualSync(context, database, clock, ids, profileId, offlinePolicy, scope) }
+        }
+    }
 
     /** Cache offline del servidor de pruebas (misma base cifrada); `null` mientras el almacenamiento no esta abierto. */
     val offlineCache: OfflineCacheStore? get() = db?.let { OfflineCacheStore(it, clock, offlinePolicy) }
@@ -152,7 +172,10 @@ class AppContainer(
                 opener = { storage.open() },
                 networkMonitor = AndroidNetworkMonitor(context),
                 secureStorage = storage,
-            ).also { it.start() }
+            ).also {
+                it.appContext = context.applicationContext
+                it.start()
+            }
         }
 
         /** Pruebas: usa una base ya abierta (normalmente en memoria). */

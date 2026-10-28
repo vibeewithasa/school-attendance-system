@@ -25,6 +25,7 @@ import mx.edu.eta15.prefectura.AppContainer
 import mx.edu.eta15.prefectura.R
 import mx.edu.eta15.prefectura.StorageState
 import mx.edu.eta15.prefectura.domain.AttendanceRepository
+import mx.edu.eta15.prefectura.domain.NoManualSync
 import mx.edu.eta15.prefectura.mobile.MobileFeature
 
 object Routes {
@@ -198,13 +199,17 @@ private fun NavGraphBuilder.sandboxGraph(container: AppContainer, navController:
     composable(Routes.SBX_SUMMARY, arguments = groupArg) { entry ->
         val groupId = entry.arguments?.getString("groupId").orEmpty()
         WithSandboxRepo(container, navController, R.string.summary_title) { repo, padding ->
-            val vm: SummaryViewModel = viewModel(key = "sbx-summary-$groupId", factory = factory { SummaryViewModel(repo, groupId) })
+            val appContext = LocalContext.current.applicationContext
+            val sync = remember { MobileFeature.sandboxProfileId(appContext)?.let(container::manualSync) ?: NoManualSync }
+            val vm: SummaryViewModel = viewModel(key = "sbx-summary-$groupId", factory = factory { SummaryViewModel(repo, groupId, sync) })
             val state by vm.state.collectAsStateWithLifecycle()
             SummaryScreen(
                 state,
                 onContinue = { navController.popBackStack() },
                 contentPadding = padding,
                 onPrepare = vm::prepare,
+                onSync = vm::syncNow,
+                onCancelSync = vm::cancelSync,
             )
         }
     }

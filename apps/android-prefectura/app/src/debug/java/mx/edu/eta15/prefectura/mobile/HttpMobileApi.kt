@@ -7,6 +7,7 @@ import java.net.URL
 import java.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import mx.edu.eta15.prefectura.domain.WireMark
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -24,8 +25,8 @@ class HttpMobileApi(
     private val baseUrl: String,
     private val proofs: DpopProofBuilder,
     private val jwk: EcJwk,
-) : MobileApi {
-    private class Raw(val status: Int, val body: String)
+) : MobileApi, AttendanceApi {
+    private class Raw(val status: Int, val body: String, val retryAfter: Int? = null)
 
     private suspend fun call(
         method: String,
@@ -55,7 +56,8 @@ class HttpMobileApi(
                 }
                 val status = connection.responseCode
                 val stream = if (status >= 400) connection.errorStream else connection.inputStream
-                Raw(status, stream?.use { readLimited(it) } ?: "")
+                val retryAfter = connection.getHeaderField("Retry-After")?.trim()?.toIntOrNull()?.takeIf { it in 0..3600 }
+                Raw(status, stream?.use { readLimited(it) } ?: "", retryAfter)
             } finally {
                 connection.disconnect()
             }
@@ -78,7 +80,7 @@ class HttpMobileApi(
 
     private fun <T> parse(raw: Raw?, okStatus: Set<Int>, read: (JSONObject) -> T): ApiResult<T> {
         if (raw == null) return ApiResult.Failure(0, null)
-        if (raw.status !in okStatus) return ApiResult.Failure(raw.status, errorCode(raw.body))
+        if (raw.status !in okStatus) return ApiResult.Failure(raw.status, errorCode(raw.body), raw.retryAfter)
         return try {
             ApiResult.Ok(read(JSONObject(raw.body.ifBlank { "{}" })))
         } catch (_: JSONException) {
@@ -215,6 +217,43 @@ class HttpMobileApi(
                 asOf = o.getString("asOf"),
             )
         }
+    }
+
+    // ===================================================================================== asistencia (sandbox, manual)
+    // Exactamente CUATRO operaciones del canal movil de asistencia: leer hoy, leer una lista, abrir la lista del dia y guardar marcas.
+    // No existen finalizar, borrar, corregir ni historial. Cada peticion lleva una prueba DPoP NUEVA (jti aleatorio) ligada al metodo,
+    // a la URL y al token de acceso; el `requestId` de la operacion viaja solo en el cuerpo y es estable en los reintentos.
+
+    override suspend fun today(session: MobileSession): ApiResult<SrvToday> {
+        val path = "/mobile/school/attendance/today"
+        val raw = call("GET", path, proof = proof("GET", path, session.accessToken), access = session.accessToken)
+        return parse(raw, setOf(200), AttendanceJson::today)
+    }
+
+    override suspend fun day(session: MobileSession, dayId: String): ApiResult<SrvDetail> {
+        val path = "/mobile/school/attendance/days/$dayId"
+        val raw = call("GET", path, proof = proof("GET", path, session.accessToken), access = session.accessToken)
+        return parse(raw, setOf(200), AttendanceJson::detail)
+    }
+
+    override suspend fun openDay(session: MobileSession, groupId: String, attendanceDate: String): ApiResult<SrvOpen> {
+        val path = "/mobile/school/attendance/days"
+        val body = """{"groupId":${Dpop.jsonString(groupId)},"attendanceDate":${Dpop.jsonString(attendanceDate)}}"""
+        val raw = call("POST", path, body, proof("POST", path, session.accessToken), session.accessToken)
+        return parse(raw, setOf(200, 201)) { AttendanceJson.open(it, created = raw?.status == 201) }
+    }
+
+    override suspend fun saveMarks(
+        session: MobileSession,
+        dayId: String,
+        expectedRevision: Int,
+        requestId: String,
+        marks: List<WireMark>,
+    ): ApiResult<SrvSave> {
+        val path = "/mobile/school/attendance/days/$dayId/marks"
+        val body = AttendanceJson.saveBody(expectedRevision, requestId, marks)
+        val raw = call("POST", path, body, proof("POST", path, session.accessToken), session.accessToken)
+        return parse(raw, setOf(200), AttendanceJson::save)
     }
 
     private fun groupLabel(g: JSONObject): String {

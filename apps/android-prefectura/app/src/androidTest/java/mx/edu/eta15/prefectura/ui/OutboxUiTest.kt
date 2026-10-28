@@ -1,6 +1,8 @@
 package mx.edu.eta15.prefectura.ui
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -12,10 +14,13 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.time.LocalDate
+import mx.edu.eta15.prefectura.domain.ManualSyncState
 import mx.edu.eta15.prefectura.domain.OperationInfo
 import mx.edu.eta15.prefectura.domain.OperationKind
 import mx.edu.eta15.prefectura.domain.OperationState
 import mx.edu.eta15.prefectura.domain.OutboxSummary
+import mx.edu.eta15.prefectura.domain.SyncReport
+import mx.edu.eta15.prefectura.domain.SyncResultKind
 import mx.edu.eta15.prefectura.ui.theme.EtaTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -39,6 +44,16 @@ class OutboxUiTest {
 
     private fun show(outbox: OutboxSummary, message: PrepareMessage? = null, enabled: Boolean = true, onPrepare: () -> Unit = {}) {
         rule.setContent { EtaTheme { OutboxSection(outbox, message, enabled, onPrepare) } }
+    }
+
+    private fun showSync(
+        outbox: OutboxSummary,
+        sync: ManualSyncState = ManualSyncState(),
+        available: Boolean = true,
+        onSync: () -> Unit = {},
+        onCancel: () -> Unit = {},
+    ) {
+        rule.setContent { EtaTheme { OutboxSection(outbox, null, true, {}, syncAvailable = available, sync = sync, onSync = onSync, onCancelSync = onCancel) } }
     }
 
     @Test
@@ -109,5 +124,81 @@ class OutboxUiTest {
     fun conElAccesoBloqueadoElBotonSeDeshabilita() {
         show(summary(unsealed = true), enabled = false)
         rule.onNodeWithText("Preparar para sincronizar").assertIsNotEnabled()
+    }
+
+    // ---------------------------------------------------------------------------------------------- sincronizacion manual
+
+    @Test
+    fun sinTransporteNoHayBotonDeSincronizar() {
+        showSync(summary(unsealed = false, op(OperationKind.SAVE_MARKS, OperationState.READY)), available = false)
+        rule.onAllNodesWithText("Sincronizar ahora").assertCountEquals(0)
+        rule.onNodeWithTag("outbox-prepare").assertIsDisplayed()
+    }
+
+    @Test
+    fun conTransporteElBotonExisteYSoloSeDisparaPorLaPulsacion() {
+        var taps = 0
+        showSync(summary(unsealed = false, op(OperationKind.SAVE_MARKS, OperationState.READY)), onSync = { taps++ })
+        rule.onNodeWithText("Sincronizar ahora").assertIsDisplayed().assertIsEnabled()
+        assertEquals(0, taps) // mostrar la pantalla no inicia nada
+        rule.onNodeWithText("Sincronizar ahora").performClick()
+        assertEquals(1, taps)
+    }
+
+    @Test
+    fun durantEUnCicloElBotonSeDeshabilitaYSePuedeCancelar() {
+        var cancels = 0
+        showSync(summary(unsealed = true, op(OperationKind.SAVE_MARKS, OperationState.SENDING)), ManualSyncState(running = true, groupId = "g"), onCancel = { cancels++ })
+        rule.onNodeWithText("Sincronizar ahora").assertIsNotEnabled()
+        rule.onNodeWithText("Preparar para sincronizar").assertIsNotEnabled()
+        rule.onNodeWithTag("outbox-sync-running").assertIsDisplayed()
+        rule.onNodeWithTag("outbox-op-SAVE_MARKS-SENDING").assertIsDisplayed()
+        rule.onNodeWithText("Cancelar").performClick()
+        assertEquals(1, cancels)
+    }
+
+    @Test
+    fun soloUnReciboConfirmadoDiceConfirmadoPorElServidor() {
+        showSync(summary(unsealed = false, op(OperationKind.OPEN, OperationState.ACKNOWLEDGED, 0), op(OperationKind.SAVE_MARKS, OperationState.ACKNOWLEDGED)), ManualSyncState(last = SyncReport(SyncResultKind.CONFIRMED, 1)))
+        rule.onNodeWithTag("outbox-op-SAVE_MARKS-ACKNOWLEDGED").assertIsDisplayed()
+        rule.onAllNodesWithText("Confirmado por el servidor", substring = true)[0].assertIsDisplayed()
+        rule.onNodeWithTag("outbox-sync-result-CONFIRMED").assertIsDisplayed()
+    }
+
+    @Test
+    fun ningunResultadoDiceSincronizadoNiEnviadoYTodosTienenSuMensaje() {
+        var current by androidx.compose.runtime.mutableStateOf(SyncResultKind.CONFIRMED)
+        rule.setContent {
+            EtaTheme {
+                OutboxSection(
+                    summary(unsealed = false, op(OperationKind.SAVE_MARKS, OperationState.RETRYABLE_ERROR)), null, true, {},
+                    syncAvailable = true, sync = ManualSyncState(last = SyncReport(current)),
+                )
+            }
+        }
+        for (kind in SyncResultKind.entries) {
+            rule.runOnUiThread { current = kind }
+            rule.waitForIdle()
+            rule.onAllNodesWithText("Sincronizado", substring = true, ignoreCase = true).assertCountEquals(0)
+            rule.onAllNodesWithText("Enviado", substring = true, ignoreCase = true).assertCountEquals(0)
+            rule.onNodeWithTag("outbox-sync-result-$kind").assertIsDisplayed()
+        }
+    }
+
+    @Test
+    fun cadaEstadoDeLaOperacionTieneSuTextoPropio() {
+        showSync(
+            summary(
+                unsealed = false,
+                op(OperationKind.SAVE_MARKS, OperationState.RETRYABLE_ERROR),
+                op(OperationKind.SAVE_MARKS, OperationState.CONFLICT),
+                op(OperationKind.OPEN, OperationState.NEEDS_REVIEW, 0),
+                op(OperationKind.OPEN, OperationState.AUTH_REQUIRED, 0),
+            ),
+        )
+        rule.onNodeWithText("se puede reintentar con el mismo envío", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("la lista cambió en el servidor", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("Necesita revisión", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("volver a autenticar", substring = true).assertIsDisplayed()
     }
 }

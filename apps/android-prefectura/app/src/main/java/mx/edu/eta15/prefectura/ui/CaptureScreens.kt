@@ -221,6 +221,8 @@ fun SummaryScreen(
     onContinue: () -> Unit,
     contentPadding: PaddingValues,
     onPrepare: (String) -> Unit = {},
+    onSync: () -> Unit = {},
+    onCancelSync: () -> Unit = {},
 ) {
     when (state) {
         SummaryUiState.Loading -> LoadingView(Modifier.padding(contentPadding))
@@ -236,12 +238,19 @@ fun SummaryScreen(
             modifier = Modifier.padding(contentPadding),
             actions = { TextButton(onClick = onContinue) { Text(stringResource(R.string.action_back)) } },
         )
-        is SummaryUiState.Ready -> SummaryContent(state, onContinue, contentPadding, onPrepare)
+        is SummaryUiState.Ready -> SummaryContent(state, onContinue, contentPadding, onPrepare, onSync, onCancelSync)
     }
 }
 
 @Composable
-private fun SummaryContent(state: SummaryUiState.Ready, onContinue: () -> Unit, contentPadding: PaddingValues, onPrepare: (String) -> Unit) {
+private fun SummaryContent(
+    state: SummaryUiState.Ready,
+    onContinue: () -> Unit,
+    contentPadding: PaddingValues,
+    onPrepare: (String) -> Unit,
+    onSync: () -> Unit,
+    onCancelSync: () -> Unit,
+) {
     val draft = state.draft
     val s = draft.summary
     val pendingRows = draft.rows.filter { it.mark == null }
@@ -279,7 +288,16 @@ private fun SummaryContent(state: SummaryUiState.Ready, onContinue: () -> Unit, 
         item { InfoNotice(stringResource(R.string.summary_not_server)) }
         state.outbox?.let { outbox ->
             item {
-                OutboxSection(outbox, state.prepareMessage, enabled = !draft.needsReview || outbox.unsealedChanges, onPrepare = { onPrepare(draft.draftId) })
+                OutboxSection(
+                    outbox,
+                    state.prepareMessage,
+                    enabled = !draft.needsReview || outbox.unsealedChanges,
+                    onPrepare = { onPrepare(draft.draftId) },
+                    syncAvailable = state.syncAvailable,
+                    sync = state.sync,
+                    onSync = onSync,
+                    onCancelSync = onCancelSync,
+                )
             }
         }
         if (pendingRows.isNotEmpty()) {

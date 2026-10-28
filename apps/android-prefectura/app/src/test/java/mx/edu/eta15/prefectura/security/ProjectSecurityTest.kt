@@ -221,12 +221,59 @@ class ProjectSecurityTest {
             "sin sincronizacion automatica",
             Regex("""WorkManager|JobScheduler|AlarmManager|SyncAdapter|PeriodicWorkRequest""").containsMatchIn(common),
         )
-        // El cliente de PRUEBAS (solo debug) solo conoce las dos lecturas autorizadas: ninguna ruta ni metodo de asistencia.
-        val debug = sourceFiles("src/debug").filter { it.extension == "kt" }.joinToString("\n") { it.readText() }
-        assertFalse("el cliente de pruebas no conoce ninguna ruta de asistencia", Regex("""/attendance|school/attendance""").containsMatchIn(debug))
+        // La interfaz de vinculacion y lectura del servidor de pruebas (MobileApi) sigue sin conocer la asistencia.
         val api = file("src/debug/java/mx/edu/eta15/prefectura/mobile/MobileApi.kt").readText()
-        assertFalse("la interfaz del servidor de pruebas no tiene operaciones de asistencia", api.contains("ttendance"))
+        assertFalse("la interfaz de vinculacion no tiene operaciones de asistencia", api.contains("ttendance"))
         assertTrue(api.contains("suspend fun myGroups") && api.contains("suspend fun roster"))
+    }
+
+    @Test
+    fun `las rutas de asistencia solo existen en debug y son exactamente cuatro (dos lecturas y dos escrituras)`() {
+        val debugFiles = sourceFiles("src/debug").filter { it.extension == "kt" }
+        val debug = debugFiles.joinToString("\n") { it.readText() }
+        val http = file("src/debug/java/mx/edu/eta15/prefectura/mobile/HttpMobileApi.kt").readText()
+        // la unica ruta que habla de asistencia es el cliente HTTP de debug y la interfaz AttendanceApi
+        val routeFiles = debugFiles.filter { it.readText().contains("/mobile/school/attendance") }.map { it.name }
+        assertEquals(listOf("HttpMobileApi.kt"), routeFiles)
+        val routes = Regex("""/mobile/school/attendance[^"]*""").findAll(http).map { it.value }.toList()
+        assertEquals(
+            listOf("/mobile/school/attendance/today", "/mobile/school/attendance/days/${'$'}dayId", "/mobile/school/attendance/days", "/mobile/school/attendance/days/${'$'}dayId/marks"),
+            routes,
+        )
+        // dos POST de asistencia (abrir y guardar) y ninguna operacion que no este aprobada
+        assertEquals(2, Regex("""call\("POST", path, body, proof\("POST", path, session\.accessToken\), session\.accessToken\)""").findAll(http).count())
+        assertFalse(
+            "sin finalizar, borrar, corregir ni historial",
+            Regex("""/finalize|finalizeDay|fun finalize|"DELETE"|"PUT"|"PATCH"|/corrections|/history|/events""").containsMatchIn(debug),
+        )
+        // el release nunca ve nada de esto
+        val shipped = sourceFiles("src/main", "src/release").filter { it.extension == "kt" }.joinToString("\n") { it.readText() }
+        assertFalse(Regex("""mobile/school|AttendanceApi|ManualSyncEngine|HttpMobileApi""").containsMatchIn(shipped.replace("MobileFeature.manualSync", "")))
+    }
+
+    @Test
+    fun `la sincronizacion solo nace de la accion de la persona (sin red, arranque, temporizador ni segundo plano)`() {
+        val debugDir = "src/debug/java/mx/edu/eta15/prefectura/mobile"
+        val transport = listOf("ManualSyncEngine.kt", "DebugManualSync.kt", "SyncStore.kt", "SyncPolicy.kt", "AttendanceApi.kt")
+            .joinToString("\n") { file("$debugDir/$it").readText() }
+        assertFalse(
+            "el transporte no escucha la red, ni el arranque, ni usa temporizadores o trabajos en segundo plano",
+            Regex("""NetworkMonitor|ConnectivityManager|registerNetworkCallback|WorkManager|JobScheduler|AlarmManager|BroadcastReceiver|Timer\(|fixedRate|scheduleAtFixedRate|Handler\(|ProcessLifecycleOwner|ACTION_BOOT""")
+                .containsMatchIn(transport),
+        )
+        // `syncNow(` solo lo invoca el manejador de la interfaz: el ViewModel (evento de pulsacion) y nadie mas en produccion
+        val callers = sourceFiles("src/main", "src/debug").filter { it.readText().contains(".syncNow(") }.map { it.name }.sorted()
+        assertEquals(listOf("ViewModels.kt"), callers)
+        // ... y la unica llamada a la accion desde Compose es el boton
+        val ui = sourceFiles("src/main/java/mx/edu/eta15/prefectura/ui").joinToString("\n") { it.readText() }
+        assertTrue(ui.contains("onClick = onSync"))
+        // el contenedor, la pantalla de inicio, la vinculacion y el monitor de red no inician ciclos
+        for (name in listOf("AppContainer.kt", "MainActivity.kt", "MobileLinkController.kt")) {
+            val text = sourceFiles("src/main", "src/debug").firstOrNull { it.name == name }?.readText() ?: continue
+            assertFalse("$name no debe iniciar sincronizacion", text.contains("syncNow") || text.contains("ManualSyncEngine("))
+        }
+        // no se instala WorkManager en ningun modulo
+        assertFalse(file("build.gradle.kts").readText().contains("androidx.work"))
     }
 
     @Test
@@ -258,12 +305,15 @@ class ProjectSecurityTest {
             "la outbox no conoce ninguna red ni programador",
             Regex("""java\.net|okhttp|retrofit|HttpURLConnection|WorkManager|JobScheduler|AlarmManager|ConnectivityManager|/attendance|school/attendance""", RegexOption.IGNORE_CASE).containsMatchIn(text),
         )
-        // Los metodos que representan el transporte (SENDING, recibo, contexto remoto, descarte) existen solo para simularlo en pruebas:
-        // ningun codigo de produccion (fuera de OutboxStore) los invoca.
-        val others = sourceFiles("src/main", "src/debug").filter { it.name != "OutboxStore.kt" }.joinToString("\n") { it.readText() }
+        // Los metodos que representan el transporte (SENDING, recibo, contexto remoto, descarte) solo los invoca el adaptador del motor
+        // manual de DEBUG (RoomSyncStore); ningun codigo de main ni de release (fuera de OutboxStore) los llama.
+        val shipped = sourceFiles("src/main", "src/release").filter { it.name != "OutboxStore.kt" }.joinToString("\n") { it.readText() }
         for (method in listOf("resolveContext", "beginSending", "acknowledge(", "outbox.fail(", "discard(")) {
-            assertFalse("el codigo de produccion no debe llamar a $method", others.contains(method))
+            assertFalse("el codigo de produccion no debe llamar a $method", shipped.contains(method))
         }
+        val debugCallers = sourceFiles("src/debug").filter { f -> listOf("resolveContext(", "beginSending(", "store.fail(", ".discard(").any { f.readText().contains(it) } }.map { it.name }
+        assertEquals(listOf("SyncStore.kt"), debugCallers)
+        assertFalse("nadie descarta una operacion desde el transporte", sourceFiles("src/debug").any { it.readText().contains("discard(") })
         // La outbox solo se crea para perfiles descargados del servidor de pruebas (nunca para la demostracion local).
         val repo = file("$base/data/LocalAttendanceRepository.kt").readText()
         assertTrue(repo.contains("if (access != null) OutboxStore(db, clock, ids) else null"))
