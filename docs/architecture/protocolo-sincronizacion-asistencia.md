@@ -1,0 +1,527 @@
+# Protocolo de sincronización de asistencia (DISEÑO — sin implementar)
+
+Estado (2026-10-28): **documento de diseño**. No hay envío de asistencia desde Android, ni cola local, ni trabajos programados, ni cambios de API, de Room o de PostgreSQL. Todo lo que dice «se propone» **no está aprobado**: ni por la institución ni por una revisión de seguridad. El [ADR 0005](../decisions/0005-android-autenticacion-movil.md) sigue **PROPUESTO**. Todo se diseñó y se razona con datos ficticios.
+
+Dependencia de ramas: este documento vive en `design/attendance-sync-protocol`, creada desde `feat/android-offline-cache` (PR #3, Draft, base `feat/android-mobile-auth`) que a su vez depende del PR #2 (Draft). Ninguno está fusionado en `main`. Lo que aquí se describe como «existe» está verificado en el código de esas ramas, no en documentos antiguos.
+
+## 1. Contexto y alcance
+
+**Problema.** La app de prefectura ya captura Presente/Ausente/Pendiente sin internet en una base cifrada (borradores locales). Falta decidir **cómo y cuándo** esas marcas pasan a ser asistencia oficial del servidor sin duplicar eventos, sin sobrescribir en silencio, sin aceptar lo que no corresponde y sin perder borradores.
+
+**Dentro de alcance**: operaciones, identidades, contratos HTTP de ejemplo, cola local (outbox) propuesta, concurrencia, autorización, fecha escolar, padrón histórico, matriz de conflictos, reintentos, pruebas futuras, decisiones abiertas y plan por fases.
+
+**Fuera de alcance (no se hace en esta rama)**: código de envío, rutas nuevas, migraciones SQL, `GRANT`, workers, MFA, cambios de políticas escolares, datos reales.
+
+**Principios** (heredados de `diseno-asistencia-diaria.md` y del ADR 0005): el servidor es la autoridad; la fecha escolar la decide el servidor; el reloj del teléfono no es autoridad; una lista finalizada es historia inmutable; sin _last-write-wins_; sin borrado; nada se declara «enviado» sin confirmación del servidor; datos mínimos de menores.
+
+## 2. Estado real del sistema (verificado en el código)
+
+### 2.1 Backend de asistencia (existe, canal web)
+
+Rutas en `apps/api/src/modules/attendance/attendance.routes.ts`, prefijo `/school/attendance`, protegidas por `adminGuard` (**cookie de sesión web + puerta de MFA**) y, en mutaciones, por CSRF y `Origin`:
+
+| Ruta                                 | Qué hace                                                                                           | Cuerpo (Zod estricto, `packages/shared-contracts/src/attendance.ts`)  |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `GET /attendance/today`              | Grupos del día de quien consulta, `schoolToday`, `isSchoolDay`, resumen de la lista si existe      | sin query                                                             |
+| `POST /attendance/days`              | **Obtener o crear** la lista de HOY del grupo (201 si la creó, 200 si ya existía)                  | `{ groupId, attendanceDate? }` (la fecha solo se **contrasta**)       |
+| `GET /attendance/days`               | Lista paginada (`groupId`, `from`, `to`, `status`)                                                 | query                                                                 |
+| `GET /attendance/days/:id`           | Detalle: `revision`, `status`, `counts`, `records[]` (alumno, estado), `editable`, `discrepancies` | —                                                                     |
+| `POST /attendance/days/:id/marks`    | Guardar marcas del borrador (≤ 200 por petición, 32 KiB)                                           | `{ expectedRevision, requestId (uuid), marks:[{studentId, status}] }` |
+| `POST /attendance/days/:id/finalize` | Finalizar (atómico)                                                                                | `{ expectedRevision }` — **no lleva `requestId`**                     |
+| `GET /attendance/days/:id/events`    | Historial (IDs y estados; el actor solo lo ve quien supervisa)                                     | paginación                                                            |
+
+Errores: `{ "error": { "code", "message", "requestId" } }` donde `requestId` es el **id de la petición HTTP del servidor** (no es una clave de idempotencia). El `code` es el _reason_ estable (p. ej. `REVISION_CONFLICT`) o, si no hay, `FORBIDDEN|NOT_FOUND|CONFLICT|VALIDATION|UNAVAILABLE` con HTTP 403/404/409/400/503.
+
+Reglas relevantes verificadas en `attendance.service.ts` (`open` ~l.439, `saveMarks` ~l.652, `finalize` ~l.806):
+
+- **Fecha**: `todayOf()` sale de la base (`America/Mazatlan`). Ninguna fecha del cliente se acepta; `attendanceDate` distinta de «hoy» → `400 DATE_NOT_TODAY`. Guardar o finalizar una lista de otro día → `409 DAY_NOT_CURRENT`. Un borrador de ayer **no tiene hoy ninguna vía ordinaria para cerrarse** (decisión institucional pendiente, `diseno-asistencia-diaria.md` §3.2).
+- **Autorización por operación**: `resolveAccess` (permiso `attendance:capture`, alcance `assigned_groups`) y `lockGroupAccess` (vuelve a comprobar y **bloquea `FOR SHARE`** asignación y cuenta). Fuera de alcance == inexistente → **404 indistinguible**.
+- **Idempotencia** (`saveMarks`): bajo `SELECT … FOR UPDATE` de la lista se busca un evento `mark_changed` con `(attendance_day_id, request_id)`. Si existe: mismo `payload_hash` → `200` con `replayed:true, changed:0` (**aunque la revisión haya avanzado, la fecha haya cambiado o la lista ya esté finalizada**, porque esta comprobación va antes que las de estado); distinto hash → `409 IDEMPOTENCY_MISMATCH`.
+- **Huella del contenido** (`marksHash`): SHA-256 de `studentId:status` ordenado por `studentId` y unido con `|`. **Solo cubre las marcas**: no incluye `dayId`, `groupId` ni `expectedRevision`.
+- **Concurrencia**: `expectedRevision != revision` → `409 REVISION_CONFLICT` (se audita `attendance.save_conflict`); sin escribir nada. Éxito con cambios: `revision + 1`, un evento `mark_changed` por renglón cambiado.
+- **Padrón**: congelado al abrir (trigger `att_records_guard_insert`); `studentId` fuera del padrón congelado → `400 STUDENT_NOT_IN_LIST` y **no se aplica nada** de esa petición.
+- **Estados**: solo `present` y `absent`. Un renglón marcado **nunca vuelve a pendiente** (trigger `att_records_no_unmark`).
+- **Finalizar**: exige `expectedRevision`, sin pendientes (`PENDING_RECORDS`) y al menos un renglón. Si ya está finalizada devuelve `200 alreadyFinalized:true` (**sin distinguir quién la finalizó**: la prefectura no ve `finalizedBy`).
+- **Historial**: `attendance_events` solo-agregar (triggers sin `UPDATE`/`DELETE`/`TRUNCATE`), índices únicos `att_events_request_record_idx (day, request_id, record)` y `att_events_once_idx`.
+
+Restricciones de la base (migración 0010, `eta15_dev` ya la tiene): UNIQUE `(group_id, attendance_date)`, UNIQUE `(attendance_day_id, enrollment_id)`, CHECK de lunes a viernes, trigger de revisión de uno en uno, lista finalizada inmutable, `marked_at`/`finalized_at` fijados por el servidor, sin borrado físico. Privilegios de `eta15_api` **por columna** (propuesta 0005, aplicada): cualquier columna nueva (p. ej. `device_id` en eventos) exigiría una propuesta de privilegios nueva.
+
+### 2.2 Canal móvil (existe en el sandbox; PR #2)
+
+- Rutas `/mobile/*` sin cookies ni CSRF; **rechazan `Origin`** (`channelGuard`). Autenticación: `Authorization: DPoP <token>` + cabecera `DPoP` (htm, htu, iat, `jti` único, `ath`). Valores del sandbox: acceso 600 s, inactividad 1800 s, sesión absoluta 8 h, tolerancia de reloj de la prueba 60 s.
+- `verifyAccess` (por **cada** petición): sesión vigente y ligada a la clave, dispositivo `active`, cuenta y rol vigentes (`mobile_user_eligible`), sin cambio de contraseña pendiente; **roles y permisos se releen de la base**; el `jti` se registra en PostgreSQL (anti-repetición compartido) solo cuando token y clave coinciden.
+- Códigos 401 móviles: `UNAUTHENTICATED`, `INVALID_PROOF`, `NONCE_INVALID`, `TOKEN_EXPIRED`, `SESSION_ENDED`, `DEVICE_REVOKED`, `PASSWORD_CHANGE_REQUIRED`; 429 `RATE_LIMITED` con `Retry-After`; 503 `MOBILE_AUTH_UNAVAILABLE`.
+- Lecturas escolares ya expuestas por el canal móvil (mismos handlers que el portal): `GET /mobile/school/me/groups` y `GET /mobile/school/groups/:id/roster`.
+- **`MOBILE_ALLOWED_PERMISSIONS` = `prefect_assignments:read` y `students:read_basic`.** Un token móvil **no tiene** `attendance:capture` ni `attendance:read`, y **no existen rutas `/mobile/school/attendance/*`**. Hoy es imposible enviar asistencia por el canal móvil, a propósito.
+- Los handlers de asistencia **no son reutilizables tal cual**: `attendanceRoutes` registra todas las rutas con `adminGuard` y CSRF dentro de una sola función; hay que extraer cada ruta (como se hizo con `myGroupsRoute` y `groupRosterRoute`) para registrarla con los guardas móviles.
+
+### 2.3 Android (existe, PR #3; solo debug + sandbox)
+
+- Room v2 cifrada (SQLCipher). `attendance_drafts` (un borrador por perfil, grupo y fecha, con **un solo** `requestId` por borrador «que hoy no se envía»), `attendance_marks` (`status` `NULL|PRESENT|ABSENT`, `markedAtEpochMs`), `roster_snapshots` (`rosterDigest`, `serverSchoolDate`), `profile_sync` (último contacto, fecha escolar confirmada, vigencia, `authState`, marca de agua del reloj).
+- El perfil sandbox es `sbx.<deviceId>`; el id local del grupo es `<perfil>.<grupoRemoto>` y el del alumno `<grupoLocal>.<alumnoRemoto>`. `remoteId` del alumno **es el `students.id` del servidor**, el mismo `studentId` que acepta `saveMarks`.
+- La huella del padrón (`RosterDigest`) es SHA-256 de `(id, nombre, apellido)` ordenado por id: **incluye nombres**, por lo que corregir un nombre en el servidor se vería como «padrón cambiado».
+- `setMark` permite **quitar la marca** (volver a Pendiente). El servidor **no admite** deshacer una marca ya guardada (§6.4).
+- No hay HTTP de asistencia en ningún source set (prueba estática); el release no tiene `INTERNET` ni cliente de red.
+
+### 2.4 Inconsistencias encontradas y cómo se resuelven en este diseño
+
+| #   | Hallazgo                                                                                                                              | Resolución                                                                                                 |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| 1   | El `requestId` local es **uno por borrador**; el servidor liga `requestId` a un **contenido** (mismo id con otro contenido → rechazo) | Un `requestId` **por operación** (§5). El del borrador deja de usarse para esto.                           |
+| 2   | Los documentos antiguos hablan de `/school/*` para Android; el canal móvil es `/mobile/school/*` y no tiene asistencia                | Rutas móviles nuevas montadas sobre los **mismos handlers** (§4), con guarda móvil propia.                 |
+| 3   | `finalize` no tiene identificador de operación y devuelve `alreadyFinalized` sin autor                                                | Se trata como idempotente **por estado**, y el cliente **compara** el resultado con lo que capturó (§7.3). |
+| 4   | Un guardado que no cambia nada (`changed:0`, no replay) **no deja evento**, así que su `requestId` no queda registrado                | Brecha menor conocida: el cliente nunca reutiliza un `opId` con otro contenido (operaciones inmutables).   |
+| 5   | `Quitar marca` local vs. `att_records_no_unmark` del servidor                                                                         | Regla de interfaz y de cola (§6.4).                                                                        |
+| 6   | La huella del padrón local incluye nombres; el servidor no entrega ninguna huella                                                     | Huella v2 **solo de ids** y, si se aprueba, huella calculada por el servidor (§10).                        |
+| 7   | `adminGuard` exige MFA; el canal móvil declara `mfa.required:false`                                                                   | Los handlers se registran con `accessGuard` móvil, **no** con `adminGuard` (§8).                           |
+
+## 3. Modelo de operaciones
+
+Cuatro operaciones distintas, con garantías distintas:
+
+| #   | Operación                           | Dónde ocurre             | Efecto en el servidor                     | Idempotencia                                           |
+| --- | ----------------------------------- | ------------------------ | ----------------------------------------- | ------------------------------------------------------ |
+| 1   | **Capturar / actualizar borrador**  | Solo en Android (Room)   | Ninguno                                   | n/a. Nunca genera red.                                 |
+| 2   | **Consultar estado** de grupo y día | Lectura (`GET`)          | Ninguno                                   | Natural                                                |
+| 3   | **Enviar cambios** ordinarios       | `POST …/marks` (+ abrir) | Cambia renglones, `revision + 1`, eventos | **Por `requestId` + huella de contenido** (ya existe)  |
+| 4   | **Finalizar** la lista              | `POST …/finalize`        | `draft → finalized` (irreversible)        | Por **estado** (`alreadyFinalized`); acción **humana** |
+
+Reglas:
+
+- Capturar **no** envía. Enviar **no** finaliza. Finalizar es una acción **explícita y humana**, nunca automática ni encadenada al envío: una lista finalizada es inmutable y una finalización equivocada solo se corrige con un flujo institucional que **no existe** (`attendance:correct` bloqueado).
+- «Abrir» (`POST /days`) es una lectura-o-creación: no es una operación de la cola. Se ejecuta como paso previo de enviar y **siempre con `attendanceDate` = fecha del borrador** (contraste), para que el servidor nunca cree «la lista de hoy» con marcas de otro día.
+- Orden de una sincronización de un grupo: `STATUS (consultar)` → `OPEN` si no hay lista → comparar padrón → `SAVE_MARKS` (en serie) → mostrar resultado. `FINALIZE` solo por decisión de la persona.
+
+## 4. Contratos HTTP propuestos (NO implementados)
+
+**Reutilización.** El backend actual ya cubre las cuatro operaciones; se propone **exponer por el canal móvil los mismos handlers y servicios**, sin endpoints duplicados ni lógica de dominio nueva:
+
+| Operación                  | Ruta móvil propuesta                                 | Handler existente reutilizado |
+| -------------------------- | ---------------------------------------------------- | ----------------------------- |
+| Estado del día de hoy      | `GET /mobile/school/attendance/today`                | `service.today`               |
+| Estado de un día/grupo     | `GET /mobile/school/attendance/days?groupId&from&to` | `service.list` (sin nombres)  |
+| Detalle y padrón del día   | `GET /mobile/school/attendance/days/:id`             | `service.get`                 |
+| Abrir o recuperar          | `POST /mobile/school/attendance/days`                | `service.open`                |
+| Enviar marcas              | `POST /mobile/school/attendance/days/:id/marks`      | `service.saveMarks`           |
+| Finalizar (fase posterior) | `POST /mobile/school/attendance/days/:id/finalize`   | `service.finalize`            |
+
+**No se expone** `GET …/events` (el historial queda en el portal) ni ninguna ruta administrativa. Un envío **por lotes** no se propone: son pocos grupos por prefecta y un guardado por grupo (≤ 200 marcas) cabe en una petición; un lote añadiría semántica parcial. Se reevaluará si las mediciones lo exigen.
+
+**Autenticación y encabezados** (todas): `Authorization: DPoP <accessToken>`; `DPoP: <prueba firmada con htm, htu, iat, jti nuevo y ath>`; `Content-Type: application/json` en `POST`; **sin** `Origin`, cookies ni `X-CSRF-Token`. Respuestas con `Cache-Control: no-store`.
+
+### 4.1 Abrir o recuperar
+
+```http
+POST /mobile/school/attendance/days
+{ "groupId": "<uuid remoto>", "attendanceDate": "2026-10-28" }
+```
+
+- `201` `{ day, created:true }` | `200` `{ day, created:false }` (misma lista para todas las personas con acceso). `day` = detalle con `id`, `revision`, `status`, `records[]`, `editable`, `schoolToday`, `discrepancies`.
+- `400 DATE_NOT_TODAY` (la fecha del borrador no es la de hoy del servidor: **no se crea nada**), `404` (grupo fuera de alcance o inexistente), `409 NOT_SCHOOL_DAY|GROUP_INACTIVE|OUT_OF_YEAR|EMPTY_ROSTER|ROSTER_CHANGED|CONCURRENT`, `403`, `401` móviles, `429`, `503`.
+
+### 4.2 Enviar marcas
+
+```http
+POST /mobile/school/attendance/days/<dayId>/marks
+{
+  "expectedRevision": 3,
+  "requestId": "<opId uuid de la operación>",
+  "marks": [ { "studentId": "<uuid>", "status": "present" }, { "studentId": "<uuid>", "status": "absent" } ]
+}
+```
+
+- **Éxito**: `200` `{ day, changed, replayed:false }`.
+- **Repetida** (la misma operación ya se aplicó): `200` `{ day, changed:0, replayed:true }` con el estado **vigente**.
+- **Conflicto de revisión**: `409 REVISION_CONFLICT` (nada se escribió). **Misma operación con otro contenido**: `409 IDEMPOTENCY_MISMATCH`. **Lista finalizada**: `409 DAY_FINALIZED`. **Día anterior**: `409 DAY_NOT_CURRENT`. **Alumno ajeno al padrón congelado**: `400 STUDENT_NOT_IN_LIST` (toda la petición rechazada). **Sin acceso**: `404` (indistinguible de «no existe») o `403` sin permiso.
+- **Estado de sincronización**: el cliente lo deriva de la respuesta, no de un campo nuevo: `200` ⇒ `ACKNOWLEDGED` (con `replayed` para estadística); los `409/400/404` ⇒ §11.
+- **Identificador de operación**: es el propio `requestId` (se devuelve en el evento del servidor, no en el cuerpo; el cliente ya lo conoce).
+
+### 4.3 Finalizar (fase posterior)
+
+`POST …/finalize` `{ "expectedRevision": N }` → `200 { day, alreadyFinalized }`; `409 REVISION_CONFLICT|PENDING_RECORDS|EMPTY_ROSTER|DAY_NOT_CURRENT|GROUP_INACTIVE`. Ver §7.3 para `alreadyFinalized:true`.
+
+### 4.4 `requestId` del cuerpo frente a `Idempotency-Key` HTTP
+
+|                           | `requestId` (existente)                                   | `Idempotency-Key` (cabecera)                                                                                                                                                                              |
+| ------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Estado                    | Implementado y probado                                    | **Borrador del IETF** (`draft-ietf-httpapi-idempotency-key-header`; la última versión que encontré es la 07, de octubre de 2025, ya vencida; **no vi un RFC**; verificar en Datatracker antes de citarla) |
+| Alcance de la clave       | Por lista (índice único `(day, request_id, record)`)      | Por cliente y recurso, definido por el servidor                                                                                                                                                           |
+| Verificación de contenido | Sí: `payload_hash`; distinto → `409 IDEMPOTENCY_MISMATCH` | El borrador sugiere `422` ante otro contenido                                                                                                                                                             |
+| Cubre `finalize`          | No                                                        | Sería genérica                                                                                                                                                                                            |
+
+**Recomendación técnica provisional**: **conservar `requestId`** (no añadir una segunda clave que habría que mantener coherente). Revisar la cabecera estándar solo si se estandariza y si se quiere cubrir `finalize` con la misma mecánica.
+
+### 4.5 Cambios de backend (resumen; ninguno se hace ahora)
+
+| #   | Cambio                                                                                                                                                                                   | ¿Migración / privilegios?                                | Prioridad                                             |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------- |
+| B1  | Extraer cada ruta de asistencia a una función exportable y registrar el subconjunto móvil con `accessGuard` (sin `adminGuard`/CSRF)                                                      | No                                                       | Necesario                                             |
+| B2  | Añadir `attendance:capture` y `attendance:read` a `MOBILE_ALLOWED_PERMISSIONS`, **detrás de un interruptor de configuración desactivado por defecto** y con revisión de seguridad propia | No                                                       | Necesario                                             |
+| B3  | Registrar `deviceId` y el canal en el **audit** de asistencia (`recordAudit.details`), sin tocar `attendance_events`                                                                     | No                                                       | Recomendado                                           |
+| B4  | Publicar en `shared-contracts` el catálogo de `reason` como contrato móvil (hoy solo vive en el servicio)                                                                                | No                                                       | Necesario                                             |
+| B5  | Añadir `rosterDigest` (SHA-256 de ids ordenados) al detalle de la lista y al padrón descargado, **calculado al vuelo**                                                                   | No                                                       | Recomendado                                           |
+| B6  | `finalizedByMe` (booleano) en la respuesta de `finalize`/detalle, sin revelar identidades                                                                                                | No                                                       | Opcional                                              |
+| B7  | `device_id` (nullable) en `attendance_events` y/o libro de operaciones (`attendance_operations`) para idempotencia de `finalize` y de los guardados sin cambios                          | **Sí**: migración y propuesta de privilegios por columna | Solo si la escuela exige trazabilidad por dispositivo |
+| B8  | Captura tardía / corrección: **ningún cambio hasta que la escuela decida** (§9, §16)                                                                                                     | —                                                        | Bloqueado                                             |
+
+## 5. Identidad de las operaciones
+
+| Identidad                 | Qué es                                                                           | Quién la genera       | Vida                                     | ¿Estable en reintentos?       |
+| ------------------------- | -------------------------------------------------------------------------------- | --------------------- | ---------------------------------------- | ----------------------------- |
+| `draftId` (local)         | Borrador de un grupo y fecha en Room                                             | Android               | Hasta purga del perfil                   | Sí                            |
+| **`opId`**                | Una **operación lógica** inmutable (un conjunto de marcas)                       | Android, al sellarla  | Hasta `ACKNOWLEDGED` o reemplazo         | **Sí: es el `requestId`**     |
+| `requestId` de asistencia | `opId` enviado en el cuerpo; clave de idempotencia de negocio                    | = `opId`              | Eterna en `attendance_events`            | **Sí**                        |
+| Id de petición HTTP       | Un intento de red concreto (el servidor lo genera: aparece en `error.requestId`) | Servidor              | Una petición                             | No                            |
+| `jti` DPoP                | Prueba criptográfica **de una sola petición**                                    | Android, por petición | ≤ 15 min en PostgreSQL (anti-repetición) | **No: nuevo en cada intento** |
+| `dayId`                   | `attendance_days.id`                                                             | Servidor              | Permanente                               | Sí                            |
+| `revision`                | Contador optimista de la lista                                                   | Servidor              | Monótono                                 | Cambia con cada guardado      |
+
+**Idempotencia de negocio ≠ antirrepetición criptográfica.** El `jti` impide que un tercero **repita una petición capturada** (la segunda se rechaza `401 INVALID_PROOF`). El `requestId` hace que **la misma intención del usuario** no se aplique dos veces aunque el cliente reenvíe. Son capas distintas:
+
+- Petición que **llegó** pero cuya respuesta se perdió → el cliente **reenvía con el mismo `requestId` y un `jti` nuevo**; el servidor responde `replayed:true` y nada se duplica.
+- Reenviar **la misma petición HTTP con el mismo `jti`** nunca se hace: sería rechazada (`INVALID_PROOF`) y se contaría como fallo de credenciales.
+- Reutilizar un `requestId` con **otro contenido** → `409 IDEMPOTENCY_MISMATCH` y **nunca** se reintenta: se marca `NEEDS_REVIEW` (es un defecto del cliente).
+
+**Identificación estable del contenido lógico.** La huella es la del servidor: `SHA-256( join("|", sort_por_studentId( "<studentId>:<status>" )) )` con `studentId` en **minúsculas** (el servidor hashea la cadena recibida) y `status` en `present|absent`. Android la calcula con la **misma función** y la guarda (`contentHash`) para detectar corrupción local antes de enviar. **`expectedRevision` no forma parte de la huella** y **es un parámetro de transporte, no del contenido**: puede cambiar entre intentos sin cambiar la operación.
+
+Consecuencias verificadas en el código:
+
+1. Tras un `409 REVISION_CONFLICT` (no se escribió nada) el cliente puede reenviar **el mismo `opId`** con una `expectedRevision` refrescada: el servidor no lo vio.
+2. Si la operación **sí** se aplicó y se perdió la respuesta, reenviarla con una `expectedRevision` **vieja** funciona igual: la comprobación de repetición va **antes** que las de revisión, fecha y estado.
+3. Una operación **no se edita jamás** después de sellarse. Si el contenido debe cambiar (p. ej. quitar un alumno ajeno al padrón), se crea una **operación derivada** con un `opId` nuevo y `supersedes = opId anterior`.
+
+## 6. Cola local (outbox) propuesta en Room — NO implementada
+
+Sería la **versión 3** del esquema, con migración aditiva (sin `fallbackToDestructiveMigration`, sin `REPLACE`), cifrada como el resto. Nombres ajustables.
+
+### 6.1 Tablas
+
+`sync_operations` (una fila inmutable por operación):
+
+| Columna                                      | Contenido                                                                                  |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `opId` (PK, uuid)                            | = `requestId` de asistencia                                                                |
+| `profileId`, `deviceId`                      | Perfil `sbx.<deviceId>` y dispositivo que la creó (el servidor valida su propia identidad) |
+| `groupId`, `remoteGroupId`                   | Grupo local y remoto                                                                       |
+| `schoolDate`                                 | Fecha escolar del borrador (**nunca se «mueve»**)                                          |
+| `kind`                                       | `SAVE_MARKS` o `FINALIZE`                                                                  |
+| `seq`                                        | Orden causal **por (perfil, grupo, fecha)**, creciente                                     |
+| `contentHash`                                | Misma huella que el servidor (solo `SAVE_MARKS`)                                           |
+| `state`, `reasonCode`                        | Estado (§6.2) y motivo estable                                                             |
+| `attempts`, `lastAttemptAt`, `nextAttemptAt` | Reintentos                                                                                 |
+| `lastHttpStatus`, `lastServerCode`           | Resultado del servidor (**solo** código y estado; nunca mensajes con datos)                |
+| `serverDayId`, `knownRevision`               | Lista remota y revisión usada/conocida                                                     |
+| `rosterDigestAtCapture`                      | Huella del padrón con que se capturó (v2: solo ids)                                        |
+| `supersedesOpId`                             | Operación a la que reemplaza                                                               |
+| `createdAt`, `updatedAt`, `ackedAt`          | Fechas locales **informativas** (no autoridad)                                             |
+
+`sync_operation_marks` (PK `(opId, remoteStudentId)`, FK `ON DELETE CASCADE` a la operación): `remoteStudentId`, `status` (`present|absent`). **Es el payload mínimo**: ids y estado, sin nombres.
+
+`sync_day_state` (PK `(profileId, groupId, schoolDate)`): `serverDayId`, `serverStatus`, `knownRevision`, `serverRosterDigest`, `lastCheckedAt`, `serverSchoolDate`.
+
+`sync_acked_marks` (PK `(profileId, groupId, schoolDate, remoteStudentId)`): último estado **confirmado** por el servidor para cada alumno (sirve para calcular el delta y para mostrar diferencias).
+
+Restricciones y aislamiento:
+
+- Todas las tablas llevan `profileId` con FK compuesta al grupo del **mismo** perfil (como `attendance_marks`): la cola **no puede contener datos de otro perfil**.
+- Disparadores en `onOpen` (como los existentes): `state` válido; **una sola operación `SENDING` por (perfil, grupo, fecha)** (Room no expresa índices parciales; se impone con trigger y en la transacción); una operación **sellada no cambia de contenido** (`UPDATE` de `sync_operation_marks` prohibido).
+- **Sin credenciales**: ni tokens, ni refresh, ni jti, ni claves. La sesión móvil vive en memoria; la cola solo guarda ids, estados y marcas.
+
+### 6.2 Estados
+
+`LOCAL_ONLY` (nivel borrador: hay marcas sin sellar) · `READY` · `SENDING` · `ACKNOWLEDGED` · `RETRYABLE_ERROR` · `CONFLICT` · `NEEDS_REVIEW` · `AUTH_REQUIRED` · `SUPERSEDED` (terminal) · `DISCARDED` (terminal, **solo** por decisión explícita de la persona, con confirmación).
+
+```
+LOCAL_ONLY --sellar--> READY --enviar--> SENDING --200--> ACKNOWLEDGED
+                          ^                  |--sin respuesta/429/503/5xx--> RETRYABLE_ERROR --backoff--> READY
+                          |                  |--401 renovable/sesión--> AUTH_REQUIRED --sesión nueva--> READY
+                          |                  |--409 REVISION_CONFLICT--> CONFLICT --resolver--> (derivada) READY
+                          |                  '--400/403/404/409 no reintentable--> NEEDS_REVIEW
+ proceso interrumpido en SENDING ----------> RETRYABLE_ERROR (resultado desconocido: se reenvía el mismo opId)
+```
+
+`reasonCode` (estable, en inglés técnico): `NETWORK`, `TIMEOUT`, `RATE_LIMITED`, `SERVER_UNAVAILABLE`, `TOKEN_EXPIRED`, `SESSION_ENDED`, `DEVICE_REVOKED`, `ACCOUNT_BLOCKED`, `REVISION_CONFLICT`, `SERVER_MARK_DIFFERS`, `DAY_FINALIZED`, `DAY_NOT_CURRENT`, `DATE_NOT_TODAY`, `STUDENT_NOT_IN_LIST`, `ACCESS_LOST_OR_NOT_FOUND`, `IDEMPOTENCY_MISMATCH`, `ROSTER_DIFFERS`, `UNMARK_AFTER_ACK`, `INVALID_PAYLOAD`.
+
+### 6.3 Atomicidad entre marcar y encolar
+
+- `setMark` **no crea operaciones**: sigue escribiendo solo `attendance_marks` (captura rápida, un toque, sin I/O de cola) y deja el borrador como `LOCAL_ONLY`.
+- Las operaciones se **sellan** en una sola transacción de Room (`withTransaction`): leer las marcas del borrador, calcular el **delta** frente a `sync_acked_marks` (solo marcas con estado distinto del confirmado), insertar `sync_operations` + `sync_operation_marks` con `seq = max+1` y calcular `contentHash`. O queda todo o nada: no hay operación sin marcas ni marcas sin operación.
+- Sellar ocurre al iniciar una sincronización o al pulsar «Enviar»; las marcas posteriores forman la operación **siguiente**. Esto evita una operación por toque y mantiene cada operación inmutable.
+- Un fallo de envío **nunca** toca `attendance_marks`: el borrador sigue completo y editable.
+
+### 6.4 Regla del «quitar marca»
+
+El servidor no permite volver a Pendiente. Por eso, para un alumno con estado **confirmado** en `sync_acked_marks`, la interfaz solo permite **cambiar entre Presente y Ausente**; «Quitar marca» se deshabilita (con explicación). Si aun así una marca local confirmada queda en `NULL` (p. ej. por una versión anterior), el delta la marca `UNMARK_AFTER_ACK` → `NEEDS_REVIEW` y **no se envía**.
+
+### 6.5 Retención
+
+Tras `ACKNOWLEDGED` **no se borra nada de inmediato**. Se conservan operaciones y marcas hasta que (a) la lista esté finalizada en el servidor y (b) pase la ventana de retención que la escuela decida (§16 B-5), o la persona purgue el perfil. Mientras tanto la interfaz muestra «Confirmado por el servidor», no «borrado».
+
+## 7. Versionado y concurrencia
+
+### 7.1 Una sola operación en vuelo por lista
+
+Por (perfil, grupo, fecha) se envía **una operación a la vez**, en orden de `seq`; la siguiente espera a que la anterior esté `ACKNOWLEDGED` o `SUPERSEDED`. La `expectedRevision` de la operación _n+1_ es la `revision` devuelta en el `200` de la operación _n_. Eso hace imposible que un mismo dispositivo entregue dos operaciones de la misma lista en orden inverso; si ocurriera (error de programación), la `expectedRevision` desactualizada produce `409 REVISION_CONFLICT` y no un resultado distinto.
+
+### 7.2 Revisión y conflicto
+
+El servidor compara `expectedRevision` con `revision` bajo `FOR UPDATE`. Un `409 REVISION_CONFLICT` significa «alguien cambió la lista» (otra prefecta con cobertura, la web o **otro dispositivo propio**). El cliente: (1) consulta el detalle; (2) compara por alumno **lo que el servidor tiene** frente a **lo que va en la operación**:
+
+- alumno **pendiente** en el servidor o con **el mismo estado** → no hay conflicto real;
+- alumno con **otro estado** ya confirmado → **conflicto de contenido**: se muestra a la persona (servidor / mi captura) y **ella decide**; nunca gana el último.
+
+Solo si **todos** los renglones de la operación están en el primer caso, el cliente puede reenviar **el mismo `opId`** con la revisión refrescada (**automático**, decisión técnica provisional §16 A-3). Con cualquier diferencia → `CONFLICT`/`NEEDS_REVIEW` (la persona decide; si elige su valor, se crea una operación derivada que el servidor volverá a validar; el servidor mantiene su historial de cambios).
+
+### 7.3 Finalización
+
+- Solo si el servidor reporta cero pendientes **y** toda operación del grupo está `ACKNOWLEDGED`, la interfaz ofrece «Finalizar» y la persona lo confirma.
+- `finalize` compite con `saveMarks` serializado por el bloqueo de la lista: gana el primero; el otro recibe `409 REVISION_CONFLICT` o `409 DAY_FINALIZED`.
+- `200 alreadyFinalized:true` **no prueba que la finalizó este dispositivo**. El cliente **compara** `records[]` con sus marcas confirmadas: si coinciden, «Lista finalizada» (quizá por otra persona, sin revelar quién); si difieren → `NEEDS_REVIEW` con motivo `SERVER_MARK_DIFFERS`. No se intenta modificar una lista finalizada.
+
+## 8. Autorización y revocaciones
+
+Cada intento de envío debe pasar **todas** las comprobaciones en el servidor (marcadas ✔ cuando ya existen):
+
+| Comprobación                                                                   | Dónde                                               | Estado                                       |
+| ------------------------------------------------------------------------------ | --------------------------------------------------- | -------------------------------------------- |
+| Prueba DPoP válida, `htm`/`htu`/`ath`, `jti` no repetido                       | `accessGuard` + `recordProof` (PostgreSQL)          | ✔                                            |
+| Sesión móvil vigente y ligada a la clave                                       | `verifyAccess`                                      | ✔                                            |
+| Dispositivo `active`                                                           | `verifyAccess` (`device_revoked`)                   | ✔                                            |
+| Cuenta elegible, rol de prefectura vigente, sin cambio de contraseña pendiente | `mobile_user_eligible`, `user_roles`                | ✔                                            |
+| Permisos y alcance leídos **de la base**, no del cliente                       | `verifyAccess` (re-lee `role_permissions`)          | ✔ (falta incluir los de asistencia: B2)      |
+| `attendance:capture` con `assigned_groups` y asignación **vigente hoy**        | `resolveAccess` + `lockGroupAccess` (`FOR SHARE`)   | ✔                                            |
+| Grupo activo y dentro del ciclo; fecha escolar; lista en borrador              | `saveMarks`/`open`                                  | ✔                                            |
+| `userId`, alcance, fecha o actor declarados por el cliente                     | Contratos Zod estrictos: **no existen** esos campos | ✔ (se mantiene: ningún DTO nuevo los admite) |
+
+La autorización con que se descargó el padrón **no se reutiliza**: se vuelve a evaluar en cada petición.
+
+**Prefecta que capturó estando autorizada y perdió el grupo antes de reconectar.** Propuesta **conservadora**: el servidor responde `404` (indistinguible); el cliente marca la operación `NEEDS_REVIEW` (`ACCESS_LOST_OR_NOT_FOUND`), consulta la lista de grupos para confirmar que el grupo ya no aparece (`GROUP_REVOKED`, estado que Android ya conoce) y **conserva el borrador** bloqueado. **No se acepta por el flujo ordinario ni se implementa excepción alguna.** Alternativas (decisión B-3, §16): revisión por Dirección sobre la evidencia local, descarte con acta, o captura tardía supervisada.
+
+Caso límite: una operación que **sí se aplicó** pero cuya respuesta se perdió, y cuyo acceso se retiró **antes** del reenvío, recibe `404` (el control de acceso va antes que la comprobación de repetición). Su resultado es **desconocido**: el cliente la deja en `NEEDS_REVIEW` con ese texto exacto («no se pudo confirmar si el servidor la recibió») y nunca la da por perdida ni por aplicada.
+
+**Dispositivo revocado / cuenta bloqueada / sesión terminada**: `DEVICE_REVOKED` y `ACCOUNT_BLOCKED` ⇒ todas las operaciones `AUTH_REQUIRED` (no reintentables) y el perfil se bloquea (ya implementado); `TOKEN_EXPIRED` ⇒ renovar y reintentar; `SESSION_ENDED` ⇒ abrir sesión nueva con la clave del dispositivo (ver A-5: si debe exigir presencia de la persona). Los borradores y la cola **se conservan**; no hay borrado remoto.
+
+## 9. Fecha escolar y medianoche
+
+**Cinco relojes que no hay que confundir:**
+
+| Concepto                                           | Quién lo decide                           | Uso                                              |
+| -------------------------------------------------- | ----------------------------------------- | ------------------------------------------------ |
+| Fecha escolar del servidor (`schoolToday`)         | Servidor (`America/Mazatlan`)             | **Única** que decide dónde cae una captura       |
+| Fecha mostrada en Android                          | Android (reloj + última fecha confirmada) | Interfaz; borrador `schoolDate`                  |
+| Momento local de captura (`markedAt`, `createdAt`) | Reloj del teléfono                        | **Solo informativo**; no se envía como autoridad |
+| Momento de recepción                               | Servidor (`occurred_at`, `marked_at`)     | Historial                                        |
+| Última validación / vigencia offline               | Servidor + Android                        | Acceso offline (hoy 30 min, solo sandbox)        |
+
+**Reglas del envío** (el backend **no cambia** su política):
+
+1. La operación se envía **solo** si `schoolDate` del borrador **== `schoolToday` del servidor** (leído en `GET /today` justo antes). El cliente **nunca** envía a un `dayId` cuya `attendanceDate` difiera de la del borrador.
+2. `open` lleva siempre `attendanceDate`: un cliente con el reloj atrasado/adelantado no puede crear «la lista de hoy» con datos de otro día (`400 DATE_NOT_TODAY`).
+3. Si la fecha ya no coincide → `NEEDS_REVIEW` con `DATE_NOT_TODAY`/`DAY_NOT_CURRENT` y se muestra «Captura histórica bloqueada». **No se intenta, no se «mueve» a hoy, no se borra.**
+4. La repetición de una operación **ya aplicada** sí se acepta tras medianoche (la comprobación de `requestId` precede a la de fecha): recuperar una respuesta perdida **no** es captura tardía.
+
+**Casos obligatorios**
+
+| Caso                                       | Resultado esperado                                                                                                                                                                                                         |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Captura y envío el mismo día               | `OPEN` (si no hay lista) → `SAVE_MARKS` → `ACKNOWLEDGED`.                                                                                                                                                                  |
+| Captura antes de medianoche, envío después | Operaciones aún no aplicadas → `NEEDS_REVIEW` (`DATE_NOT_TODAY`/`DAY_NOT_CURRENT`), borrador intacto. Una operación aplicada cuya respuesta se perdió → `replayed:true` (se acepta).                                       |
+| Fin de semana                              | Android no crea borradores; el servidor responde `409 NOT_SCHOOL_DAY`.                                                                                                                                                     |
+| Teléfono con reloj alterado                | El servidor ignora la hora del cliente. Reloj atrasado: se detecta `CLOCK_SUSPECT` (ya implementado) y se bloquea. Reloj **adelantado** puede etiquetar con «mañana» una captura de hoy: ver mitigación abajo.             |
+| Dispositivo sin conexión varias horas      | La vigencia offline caduca (hoy 30 min en sandbox): se **bloquean nuevas consultas y capturas**; lo ya sellado se conserva y se envía al reconectar según estas reglas.                                                    |
+| Vigencia offline vencida                   | Bloquea lectura/captura locales; **no** borra borradores ni operaciones; para enviar se requiere sesión móvil vigente y fecha coincidente. Si lo ya capturado debe poder enviarse tras vencer la vigencia es decisión B-1. |
+
+**Mitigación del reloj adelantado (propuesta técnica A-4).** Para que una captura de hoy no se etiquete con otra fecha, Android debe derivar `schoolDate` de la **última fecha escolar confirmada por el servidor + tiempo monotónico transcurrido** (`elapsedRealtime`), no del reloj de pared, y compararlo con el reloj de pared (la marca de agua actual sigue). Tras un **reinicio** del teléfono el tiempo monotónico se pierde: la fecha queda **no confirmada** y la captura/envío exigen reconectar. Un borrador cuya fecha no se pueda confirmar no se envía; si al reconectar coincide con la del servidor se acepta, con el riesgo residual (documentado) de que el reloj haya estado adelantado dentro de la vigencia.
+
+**Qué hacer con lo que llega tarde (decisión B-2, §16).** El diseño técnico es el mismo para todas las alternativas: la operación queda en `NEEDS_REVIEW` con `DATE_NOT_TODAY`, conservada y visible; lo que cambia es **quién** y **por qué canal** la resuelve.
+
+## 10. Padrón histórico
+
+**Identificadores**: ciclo (`schoolYearId`), grupo (`groupId`), matrícula (`enrollment_id`, solo en el servidor), alumno (`students.id` = `remoteStudentId` en Android), lista (`dayId`), padrón de la lista = `attendance_records` **congelados al abrir** (el padrón real para esa fecha), fecha de referencia = `attendanceDate` de la lista.
+
+**Relación con el snapshot local.** El snapshot de Android (`roster_snapshots`) es el padrón **descargado en algún momento**; la lista del servidor puede haberse abierto después (por otra persona o dispositivo) con un padrón distinto. La **única comparación válida** es contra los renglones de la lista:
+
+1. Antes de enviar, `GET …/days/:id` y comparar el **conjunto de `studentId`** de `records[]` con el conjunto de alumnos del borrador (nunca por nombre).
+2. Marcas de alumnos **ausentes** en la lista del servidor → no se envían: se crea una operación derivada sin ellos y la original queda `SUPERSEDED`; los ausentes pasan a `NEEDS_REVIEW` (`STUDENT_NOT_IN_LIST`). (Si se enviaran, el servidor rechazaría **toda** la petición con `400`.)
+3. Alumnos **en la lista pero no en el borrador** → quedan pendientes; el cliente **no inventa** marcas.
+4. Android **jamás agrega alumnos** a una lista: el servidor tampoco lo admite (padrón congelado, `STUDENT_NOT_IN_LIST`).
+
+| Caso                                | Detección                                                                          | Acción                                                                                                   |
+| ----------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Alumno recién incorporado           | Está en el padrón actual, no en la lista congelada (`discrepancies.addedToRoster`) | Se informa; no se agrega (decisión institucional §3.9 del diseño de asistencia).                         |
+| Transferencia entre grupos          | Alumno fuera del padrón del grupo A; puede aparecer en B                           | Solo se envía lo que está en la lista de cada grupo; posible doble presencia el mismo día: decisión B-4. |
+| Baja de alumno                      | `discrepancies.removedFromRoster`                                                  | La lista conserva el renglón (no se elimina); informativo.                                               |
+| Cambio de ciclo                     | `schoolYearId` del grupo distinto / grupo ausente al descargar                     | Grupo `REVOKED` o nuevo grupo; borradores de grupos que ya no están se conservan y se marcan.            |
+| Padrón descargado parcialmente      | No ocurre: la descarga es **todo o nada** y valida cantidades                      | Un fallo deja la caché anterior intacta.                                                                 |
+| Padrón congelado en lista existente | `records[]` del detalle                                                            | **Fuente de verdad** para la comparación; no se actualiza automáticamente.                               |
+| Lista finalizada                    | `status = finalized`                                                               | **No se modifica ni se actualiza**; el cliente solo muestra lo que el servidor tiene.                    |
+
+**Datos mínimos para detectar cambios sin exponer expedientes**: conjuntos de `studentId`, conteos y una **huella de ids**. Nombres no hacen falta. **Se propone** (a) huella v2 en Android calculada **solo sobre ids** (evita falsos positivos por correcciones de nombre) y (b) **`rosterDigest` calculado por el servidor** (SHA-256 de ids ordenados, al vuelo, sin columna) tanto en el padrón descargado como en el detalle de la lista (B5): así se compara «padrón descargado» con «padrón de esa lista» sin inventar versiones. Una marca ya confirmada **nunca** se elimina de la historia: los cambios de padrón no tocan eventos.
+
+## 11. Conflictos
+
+Política: **sin _last-write-wins_**; no se sobrescribe en silencio; no se modifican listas finalizadas; no se duplican eventos; no se borran borradores; los conflictos institucionales **no** se resuelven automáticamente.
+
+| #   | Caso                                                      | Señal del servidor                                                       | Acción del cliente                                                                                                                              | ¿Automático?               | Estado                             |
+| --- | --------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ---------------------------------- |
+| 1   | No existe lista en el servidor                            | `open` → `201`                                                           | Crear la lista con `attendanceDate` del borrador; si el padrón difiere, comparar (§10).                                                         | Sí                         | `READY` → `SENDING`                |
+| 2   | Lista `draft` sin cambios desde la revisión conocida      | `revision` igual                                                         | Enviar.                                                                                                                                         | Sí                         | `ACKNOWLEDGED`                     |
+| 3   | Lista `draft` modificada por otra prefecta                | `409 REVISION_CONFLICT`                                                  | Consultar detalle; solo pendientes/iguales → reenviar mismo `opId`; estados distintos → mostrar y que decida la persona.                        | Solo si no hay diferencias | `CONFLICT` / `NEEDS_REVIEW`        |
+| 4   | Lista `finalized`                                         | `409 DAY_FINALIZED`                                                      | No reintentar; mostrar el estado del servidor y diferencias.                                                                                    | No                         | `NEEDS_REVIEW` (`DAY_FINALIZED`)   |
+| 5   | La misma operación ya se aplicó                           | `200 replayed:true`                                                      | Marcar confirmada; adoptar el estado vigente.                                                                                                   | Sí                         | `ACKNOWLEDGED`                     |
+| 6   | Mismo `requestId` con otro contenido                      | `409 IDEMPOTENCY_MISMATCH`                                               | **No reintentar**; es un defecto: conservar y avisar.                                                                                           | No                         | `NEEDS_REVIEW`                     |
+| 7   | La prefecta perdió el grupo                               | `404` (o `403`)                                                          | Confirmar con la lista de grupos; bloquear el grupo; conservar el borrador.                                                                     | No                         | `NEEDS_REVIEW` (`ACCESS_LOST…`)    |
+| 8   | Dispositivo revocado                                      | `401 DEVICE_REVOKED`                                                     | Bloquear el perfil; conservar todo; sin reintentos.                                                                                             | No                         | `AUTH_REQUIRED` (`DEVICE_REVOKED`) |
+| 9   | El alumno cambió de grupo                                 | `400 STUDENT_NOT_IN_LIST` o `discrepancies`                              | Derivar operación sin ese alumno; el alumno a revisión.                                                                                         | Derivación sí; decisión no | `SUPERSEDED` + `NEEDS_REVIEW`      |
+| 10  | El padrón fue actualizado                                 | Detalle: `records[]` ≠ borrador                                          | Comparar por ids; enviar solo lo común; marcar diferencias.                                                                                     | Parcial                    | `NEEDS_REVIEW` (`ROSTER_DIFFERS`)  |
+| 11  | El envío llega al día siguiente                           | `400 DATE_NOT_TODAY` / `409 DAY_NOT_CURRENT`                             | No «mover» la captura; conservar; mostrar «captura histórica bloqueada»; decisión B-2. (Una repetición ya aplicada sí se acepta.)               | No                         | `NEEDS_REVIEW`                     |
+| 12  | Dos dispositivos envían simultáneamente                   | Uno `200`, el otro `409 REVISION_CONFLICT`                               | El segundo aplica la regla del caso 3. Dos dispositivos propios generan `opId` distintos; el servidor los serializa por el bloqueo de la lista. | Según caso 3               | `CONFLICT`                         |
+| 13  | El servidor guarda pero la respuesta se pierde            | (sin respuesta)                                                          | Reenviar **mismo `opId`**, `jti` nuevo → `replayed:true`.                                                                                       | Sí                         | `RETRYABLE_ERROR` → `ACKNOWLEDGED` |
+| 14  | La conexión cae antes de guardar                          | (sin respuesta; nada escrito)                                            | Igual que el 13: el reenvío se aplica normalmente (o entra en conflicto).                                                                       | Sí                         | `RETRYABLE_ERROR` → …              |
+| 15  | Dos operaciones de la misma lista llegan en orden inverso | Segunda con `expectedRevision` vieja → `409`                             | Evitado por «una en vuelo» (§7.1); si ocurriera, no corrompe: es un conflicto de revisión.                                                      | —                          | `CONFLICT`                         |
+| 16  | Una finalización compite con el guardado                  | Uno gana por el bloqueo; el otro `409 REVISION_CONFLICT`/`DAY_FINALIZED` | Si el guardado pierde: caso 4. Si la finalización pierde: reevaluar y decidir la persona.                                                       | No                         | `NEEDS_REVIEW`/`CONFLICT`          |
+
+**Reintentos sin intervención**: casos 1, 2, 5, 13, 14, la reapertura de sesión por `TOKEN_EXPIRED`, y el reenvío del caso 3 **solo** cuando no hay diferencias. **Requieren intervención**: 4, 6, 7, 8, 9, 10, 11, 16 y cualquier estado distinto en el caso 3.
+
+## 12. Estados del cliente (pantallas y mensajes)
+
+Nada se presenta como éxito hasta recibir el `200`. Mensajes propuestos (es-MX), nunca «Sincronizada» antes del ACK:
+
+| Estado                      | Texto propuesto                                                   | Acción ofrecida                       |
+| --------------------------- | ----------------------------------------------------------------- | ------------------------------------- |
+| `LOCAL_ONLY` / `READY`      | «Guardada en este dispositivo. Pendiente de envío.»               | Enviar ahora                          |
+| `SENDING`                   | «Enviando…» (indicador de progreso; no bloquea la captura)        | —                                     |
+| `ACKNOWLEDGED`              | «Confirmada por el servidor» (con hora del servidor)              | Finalizar (si procede)                |
+| `RETRYABLE_ERROR`           | «No se pudo enviar. Se reintentará; sus datos siguen guardados.»  | Reintentar ahora                      |
+| `CONFLICT`                  | «Otra persona modificó esta lista. Revise las diferencias.»       | Ver diferencias y elegir              |
+| `AUTH_REQUIRED` (sesión)    | «Sesión caducada. Vuelva a iniciar la sesión del dispositivo.»    | Abrir sesión                          |
+| `AUTH_REQUIRED` (revocado)  | «Acceso revocado. Sus capturas se conservan en este dispositivo.» | Contactar a Dirección                 |
+| `NEEDS_REVIEW` (padrón)     | «El padrón cambió. Revise a los alumnos señalados.»               | Revisar                               |
+| `NEEDS_REVIEW` (fecha)      | «Captura histórica bloqueada: la fecha escolar ya pasó.»          | Conservar; ver opciones de la escuela |
+| `NEEDS_REVIEW` (finalizada) | «La lista ya fue finalizada. No se puede modificar.»              | Ver lo registrado                     |
+
+Resumen por grupo («2 confirmadas, 1 pendiente, 1 por revisar»), estado de conexión y `FLAG_SECURE` se mantienen. **No se borra nada localmente al recibir un ACK**; la limpieza sigue la política de retención (§6.5).
+
+## 13. Reintentos
+
+| Situación                                                                    | ¿Reintentar sola?  | Notas                                                                                                                                                                 |
+| ---------------------------------------------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sin internet / DNS / conexión rechazada                                      | Sí                 | Esperar conectividad; no cuenta como fallo de credenciales.                                                                                                           |
+| Timeout de red / respuesta perdida                                           | Sí                 | **Mismo `opId`, `jti` nuevo.** Resultado desconocido ⇒ el reenvío es seguro por la idempotencia.                                                                      |
+| `429`                                                                        | Sí                 | Respetar `Retry-After` si viene; si no, backoff.                                                                                                                      |
+| `503` / `5xx` temporal (`MOBILE_AUTH_UNAVAILABLE`, `ATTENDANCE_UNAVAILABLE`) | Sí                 | Backoff; si persiste, `RETRYABLE_ERROR` visible.                                                                                                                      |
+| `401 TOKEN_EXPIRED`                                                          | Sí                 | Renovar (con rotación) y reintentar. Si la respuesta de la renovación se pierde, el servidor cierra la sesión (limitación conocida): abrir sesión nueva con la clave. |
+| `401 INVALID_PROOF` / `NONCE_INVALID`                                        | Una vez            | Nueva prueba/desafío; si se repite, no insistir (puede indicar reloj o clave).                                                                                        |
+| `401 SESSION_ENDED`                                                          | No sola            | Sesión nueva (¿requiere persona?, A-5).                                                                                                                               |
+| `401 DEVICE_REVOKED`, cuenta bloqueada                                       | **No**             | Terminal hasta acción administrativa.                                                                                                                                 |
+| `403`                                                                        | **No**             | Sin permiso.                                                                                                                                                          |
+| `404` (fuera de alcance)                                                     | **No**             | Confirmar con la lista de grupos; `NEEDS_REVIEW`.                                                                                                                     |
+| `409` (conflicto, finalizada, fecha, `IDEMPOTENCY_MISMATCH`)                 | **No** sin revisar | Salvo `REVISION_CONFLICT` sin diferencias (§7.2) y `CONCURRENT` (una vez).                                                                                            |
+| `400` carga inválida / `STUDENT_NOT_IN_LIST` / `DATE_NOT_TODAY`              | **No**             | Defecto o desajuste: conservar y revisar.                                                                                                                             |
+
+**Fallo de entrega ≠ error HTTP.** Sin respuesta = **resultado desconocido** (puede haberse aplicado): se reenvía el mismo `opId`. Con respuesta HTTP = resultado **conocido**: se aplica la tabla. Nunca se interpreta un timeout como rechazo.
+
+**Backoff**: exponencial con _jitter_ completo (propuesta: base 5 s, factor 2, tope 15 min, hasta 8 intentos antes de pedir intervención; valores de sandbox, a medir). **Restricciones de red**: solo con conectividad validada, sin forzar datos móviles si la política lo prohíbe.
+
+**WorkManager** (fase posterior): trabajo **único por identidad** (`attendance-sync-<profileId>`, `ExistingWorkPolicy.KEEP`), restricción `CONNECTED`, _backoff_ exponencial del sistema como respaldo del propio. Es diferible, no exacto: no garantiza hora. Recuperación tras reinicio: al arrancar, las operaciones `SENDING` pasan a `RETRYABLE_ERROR` (resultado desconocido) y se reenvían con el mismo `opId`. **Primera etapa**: envío manual en primer plano («Enviar ahora» y al reanudar la app), sin trabajos en segundo plano; el release sigue sin `INTERNET` hasta que exista revisión de seguridad.
+
+## 14. Seguridad
+
+- **Tres capas distintas**: TLS en tránsito (release exigirá HTTPS; el sandbox usa HTTP solo hacia `10.0.2.2`), DPoP (token ligado a la clave del dispositivo; anti-repetición `jti` en PostgreSQL) e idempotencia de negocio (`requestId` + huella).
+- **Superficie mínima**: solo `today`, `days`, `days/:id`, `open`, `marks`, `finalize` por el canal móvil; sin historial, sin rutas administrativas; `Cache-Control: no-store`; `bodyLimit` y máximos de las rutas actuales; limitación de tasa existente.
+- **El servidor no confía en el cliente**: valida pertenencia al padrón congelado, estados permitidos, fecha, permisos y alcance en cada petición; el cliente no envía ni `userId`, ni rol, ni alcance, ni fecha, ni hora.
+- **Interruptor y revisión**: `attendance:*` en el token móvil, detrás de configuración apagada por defecto y una revisión de seguridad propia (B2). Hoy una cuenta con rol que exige MFA no es elegible por el canal móvil; eso se mantiene.
+- **Trazabilidad**: `deviceId` y canal en auditoría (B3); el historial de eventos ya registra actor y `requestId`. No se exponen identidades de otras prefectas.
+- **Dispositivo comprometido**: un teléfono con root podría alterar la cola, pero el servidor revalida todo; el daño se limita a marcar los grupos que esa persona ya puede capturar, con rastro. La falta de atestación y de borrado remoto sigue siendo riesgo abierto.
+- **Fugas**: ni la cola ni los registros guardan credenciales; los mensajes de error del servidor no se almacenan; los logs de Android no incluyen nombres (prueba estática existente).
+- **Datos reales**: no hasta resolver decisiones institucionales, MFA y ADR 0005.
+
+## 15. Casos de prueba futuros (NINGUNO se ha ejecutado)
+
+Niveles: **U** unitaria JVM / Vitest · **PG** PostgreSQL desechable (`pnpm test:pg-temp`) · **I** instrumentada Room/Keystore · **E2E** emulador + sandbox · **F** inyección de fallos.
+
+| #   | Nivel     | Caso                                                                                                  | Resultado correcto                                                                       |
+| --- | --------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| 1   | U         | Huella Android = huella del servidor (vectores compartidos)                                           | Mismo SHA-256 para los mismos pares, independiente del orden de entrada                  |
+| 2   | PG        | `saveMarks` repetido 50 veces concurrente con el mismo `requestId`                                    | 1 sola aplicación; 49 `replayed:true`; N eventos = N renglones cambiados; revisión +1    |
+| 3   | PG        | Mismo `requestId`, otro contenido                                                                     | `409 IDEMPOTENCY_MISMATCH`; sin cambios                                                  |
+| 4   | F         | Respuesta perdida (cortar tras COMMIT) y reenvío con `jti` nuevo                                      | `replayed:true`; sin duplicados; borrador intacto                                        |
+| 5   | F         | Caída antes de guardar y reenvío                                                                      | Se aplica una vez                                                                        |
+| 6   | PG        | Reenvío del mismo `jti`                                                                               | `401 INVALID_PROOF`; no cambia asistencia; (confirma que DPoP ≠ idempotencia)            |
+| 7   | PG        | Dos prefectas (cobertura) guardan a la vez                                                            | Una `200`, otra `409 REVISION_CONFLICT`; ningún renglón sobrescrito sin aviso            |
+| 8   | E2E       | Dos dispositivos de la misma prefecta, marcas distintas                                               | Se serializa; las diferencias se muestran; nada se pierde                                |
+| 9   | PG        | Guardar vs. finalizar simultáneos                                                                     | Un resultado coherente: o finaliza con esas marcas o el guardado recibe `DAY_FINALIZED`  |
+| 10  | PG        | Finalizar dos veces / por otra persona                                                                | `alreadyFinalized:true`; un solo evento `day_finalized`                                  |
+| 11  | PG+U      | Revocar la asignación entre captura y envío                                                           | `404`; la operación queda `NEEDS_REVIEW`; el borrador sigue                              |
+| 12  | PG+E2E    | Revocar el dispositivo                                                                                | `401 DEVICE_REVOKED`; sin reintentos; cola y borradores conservados                      |
+| 13  | PG        | Cambio de ciclo / grupo inactivo                                                                      | `409 GROUP_INACTIVE`/`OUT_OF_YEAR`; sin cambios                                          |
+| 14  | PG+U      | Medianoche: envío al día siguiente                                                                    | `NEEDS_REVIEW` (`DATE_NOT_TODAY`/`DAY_NOT_CURRENT`); una repetición ya aplicada sí `200` |
+| 15  | U         | Reloj del teléfono adelantado/atrasado/reinicio                                                       | Fecha no confirmada; no se envía; `CLOCK_SUSPECT`; nunca se crea lista de otro día       |
+| 16  | PG        | `open` con `attendanceDate` ≠ hoy                                                                     | `400 DATE_NOT_TODAY`; no se crea lista                                                   |
+| 17  | PG+U      | Alumno ajeno al padrón congelado / transferido / baja                                                 | `400 STUDENT_NOT_IN_LIST`; operación derivada sin ese alumno; nada aplicado parcialmente |
+| 18  | U         | Huella de ids vs. cambio de nombre                                                                    | La corrección de nombre **no** marca padrón cambiado; el cambio de ids sí                |
+| 19  | I         | Sellado atómico (marcas ↔ operación) con fallo a mitad                                                | Todo o nada; borrador completo                                                           |
+| 20  | I         | Matar el proceso en `SENDING`                                                                         | Al reabrir: `RETRYABLE_ERROR`; reenvío con el mismo `opId`; sin duplicados               |
+| 21  | I         | Migración Room 2→3 con borradores                                                                     | Datos intactos; esquema válido; sin pérdida                                              |
+| 22  | I+U       | Cola nunca contiene datos de otro perfil                                                              | Constraints y consultas por `profileId`; cambiar de cuenta no mezcla                     |
+| 23  | U         | «Quitar marca» tras ACK                                                                               | Deshabilitado; si ocurre, `UNMARK_AFTER_ACK` y no se envía                               |
+| 24  | U         | Tabla de reintentos (§13)                                                                             | 401/403/404/409/400 no reintentan solas; 429/503/timeouts sí, con jitter                 |
+| 25  | E2E       | Sandbox: capturar offline, reconectar, enviar                                                         | `ACKNOWLEDGED`; en servidor 1 lista, 1 evento por cambio; en Android datos conservados   |
+| 26  | E2E       | Mensajes de interfaz                                                                                  | Nunca «enviada» antes del ACK; mensajes de §12                                           |
+| 27  | PG        | Privilegios: `eta15_api` sin `DELETE/TRUNCATE`; canal móvil con interruptor apagado                   | Sin permiso `attendance:*` en el token con el interruptor apagado; `403`                 |
+| 28  | Seguridad | Guion adversarial: `userId`/rol/alcance en el cuerpo, `Origin`, cookie web, token de otro dispositivo | Rechazo sin efectos ni fugas                                                             |
+
+Sin duplicados y sin pérdida de borradores son **invariantes transversales**: toda prueba de la lista las comprueba al final.
+
+## 16. Decisiones pendientes
+
+### A. Técnicas (pueden decidirse sin autoridad escolar; siguen siendo **provisionales**)
+
+| #   | Decisión                                                                             | Propuesta                                             |
+| --- | ------------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| A-1 | Conservar `requestId` (no `Idempotency-Key`)                                         | Conservar; revisar si el borrador se estandariza      |
+| A-2 | Granularidad de operación: un guardado por grupo, sellado por delta                  | Sí (§6.3)                                             |
+| A-3 | Reenvío automático tras `REVISION_CONFLICT` solo sin diferencias                     | Sí (§7.2)                                             |
+| A-4 | Fecha derivada de «última fecha del servidor + tiempo monotónico»                    | Sí (§9)                                               |
+| A-5 | ¿Abrir sesión móvil sin presencia de la persona (clave del dispositivo) para enviar? | Primera etapa: solo con la app en primer plano        |
+| A-6 | Huella de padrón por ids; `rosterDigest` del servidor                                | Sí (§10, B5)                                          |
+| A-7 | Valores de backoff e intentos máximos                                                | Los de §13, a medir                                   |
+| A-8 | ¿Registrar `device_id` en `attendance_events` (migración) o solo en auditoría?       | Solo auditoría primero (B3); B7 si la escuela lo pide |
+| A-9 | Libro de operaciones para idempotencia de `finalize` y guardados sin cambios         | Posponer; no hace falta para la primera etapa         |
+
+### B. Reglas institucionales (**requieren validación**; no se escoge ninguna)
+
+| #    | Decisión                                                                  | Alternativas seguras (ninguna está aprobada)                                                                                                                                                                                       |
+| ---- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| B-1  | **Vigencia offline real** y si lo ya capturado puede enviarse tras vencer | (a) la vigencia bloquea solo lectura/captura y no el envío; (b) bloquea también el envío hasta reautenticar con presencia; (c) vigencia por turno/día                                                                              |
+| B-2  | **Capturas que llegan al día siguiente**                                  | (a) no se aceptan: quedan como evidencia local y Dirección decide fuera del sistema; (b) ventana de captura tardía supervisada, con marca explícita y permiso especial; (c) importación por Dirección con revisión de la evidencia |
+| B-3  | **Prefecta que perdió el grupo** y qué pasa con sus capturas              | (a) descarte con acta; (b) revisión por Dirección; (c) aceptación supervisada con el rastro de la asignación vigente al momento de captura                                                                                         |
+| B-4  | **Resolución de conflictos de contenido** y doble presencia por traslado  | (a) siempre la persona elige con ambos valores a la vista; (b) Dirección arbitra los casos que lo ameriten; (c) prefectura titular del grupo prevalece (requiere definir «titular»)                                                |
+| B-5  | **Política de conservación local** tras ACK y finalización                | (a) hasta N días tras finalizar; (b) hasta cerrar sesión/perfil; (c) solo lo no confirmado                                                                                                                                         |
+| B-6  | **Correcciones** de listas finalizadas (`attendance:correct`)             | (a) solo Dirección con motivo y bitácora; (b) correcciones solicitadas por prefectura y aprobadas por Dirección; (c) sin correcciones en el sistema                                                                                |
+| B-7  | **Pérdida y robo** de dispositivos                                        | (a) reporte inmediato + revocación por Dirección; (b) caducidad corta del paquete + borrado al reconectar; (c) bloqueo de pantalla obligatorio (sin garantizar borrado remoto)                                                     |
+| B-8  | **Retención de IP** y de auditoría móvil                                  | (a) IP gruesa y plazo corto; (b) sin IP; (c) plazo ligado a la política escolar                                                                                                                                                    |
+| B-9  | **MFA** para datos reales                                                 | Requisito previo a datos reales; método y excepciones por definir                                                                                                                                                                  |
+| B-10 | **ADR 0005** (autenticación móvil)                                        | Revisar y aceptar, modificar o rechazar antes de cualquier uso real                                                                                                                                                                |
+
+Ninguna alternativa se marca como oficial ni se atribuye a la institución.
+
+## 17. Plan de implementación (cada fase con su revisión; ninguna se ejecuta ahora)
+
+| Fase | Contenido                                                                                                      | Compuerta                                                          |
+| ---- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 0    | Revisar este documento; redactar el ADR 0006 (protocolo) y decidir A-1…A-9; abrir las decisiones B             | Revisión de arquitectura y de seguridad                            |
+| 1    | Backend: B1, B4, B5 y rutas móviles **de lectura** (`today`, `days`, `days/:id`) detrás de interruptor apagado | Pruebas HTTP, PGlite y clúster desechable; sin migraciones         |
+| 2    | Backend: rutas móviles `open` y `marks` + B2/B3 y guion adversarial                                            | Revisión de seguridad; `test:pg-temp`; sin cambiar `eta15_dev`     |
+| 3    | Android: Room v3 (outbox, sellado, huella, regla de «quitar marca») **sin red**                                | Pruebas JVM/instrumentadas; migración 2→3                          |
+| 4    | Android: emisor en primer plano (debug/sandbox) con reintentos e idempotencia; conflictos y pantallas          | E2E en emulador con inyección de fallos; sin `INTERNET` en release |
+| 5    | `finalize` móvil y su interfaz humana; `rosterDigest`                                                          | Pruebas de carrera guardar/finalizar                               |
+| 6    | WorkManager y envío en segundo plano                                                                           | Decisiones B-1 y A-5 cerradas                                      |
+| 7    | Decisiones institucionales (B-2, B-3, B-6…) → captura tardía/correcciones                                      | **Solo con validación de la escuela**                              |
+
+Antes de cualquier uso real: B-9 (MFA), B-10 (ADR 0005), revisión de seguridad completa y aprobación institucional. Aplicar migraciones o privilegios a `eta15_dev` sigue exigiendo autorización explícita y el flujo de `CLAUDE.md` (respaldo, preflight, `pnpm db:apply-privileges`).
+
+## Qué cubre y qué no este diseño
+
+- **Cubre**: contratos reales verificados, operaciones, identidades, outbox, concurrencia, autorización, fecha, padrón histórico, conflictos, reintentos, pruebas y decisiones.
+- **No cubre ni afirma**: que el protocolo esté implementado, probado o aprobado; que el canal móvil pueda hoy enviar asistencia (no puede); datos reales; reglas escolares no decididas; MFA; atestación del dispositivo.

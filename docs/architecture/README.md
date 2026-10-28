@@ -10,6 +10,7 @@ Resumen: monolito modular (API Fastify) + clientes web/Android/PWA sobre Postgre
 
 - Contratos tipados compartidos: `packages/shared-contracts`.
 - App Android de prefectura (etapa 1, captura local con datos ficticios): [android-prefectura.md](android-prefectura.md); propuesta por etapas: [propuesta-android-asistencia.md](propuesta-android-asistencia.md); autenticación móvil (propuesta): [ADR 0005](../decisions/0005-android-autenticacion-movil.md).
+- Diseño (sin implementar) del envío de asistencia offline: [protocolo-sincronizacion-asistencia.md](protocolo-sincronizacion-asistencia.md).
 - Estado actual y módulos: [estado-del-proyecto.md](estado-del-proyecto.md).
 - Módulos escolares: [catálogo](modelo-catalogo-escolar.md), [alumnos y matrículas](modelo-alumnos-matriculas.md), [asignaciones de prefectura](modelo-asignaciones-prefectura.md) y [asistencia diaria](diseno-asistencia-diaria.md) (migración 0010 y privilegios 0005 aplicados en `eta15_dev`, sin datos).
 - Seguridad y roles: [auth-rbac.md](auth-rbac.md), [roles-postgresql.md](roles-postgresql.md), [base-de-datos-local.md](base-de-datos-local.md).
