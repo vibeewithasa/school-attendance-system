@@ -1,4 +1,4 @@
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { Layout } from './Layout';
 import { ActivationPage } from '../features/activation/ActivationPage';
 import { LoginPage } from '../features/auth/LoginPage';
@@ -11,6 +11,8 @@ import { PersonalPage } from '../features/personal/PersonalPage';
 import { AttendanceDayPage } from '../features/asistencia/AttendanceDayPage';
 import { AttendancePage } from '../features/asistencia/AttendancePage';
 import { MobileDevicesPage } from '../features/dispositivos/MobileDevicesPage';
+import { GroupReportPage } from '../features/reportes-asistencia/GroupReportPage';
+import { StudentReportPage } from '../features/reportes-asistencia/StudentReportPage';
 import { PrefectAssignmentsPage } from '../features/prefectura/PrefectAssignmentsPage';
 
 export function App() {
@@ -27,6 +29,12 @@ export function App() {
           <Route path="prefectura" element={<PrefectAssignmentsPage />} />
           <Route path="dispositivos" element={<MobileDevicesPage />} />
           <Route path="asistencia" element={<AttendancePage />} />
+          <Route
+            path="asistencia/reportes"
+            element={<Navigate to="/asistencia/reportes/grupo" replace />}
+          />
+          <Route path="asistencia/reportes/grupo" element={<GroupReportPage />} />
+          <Route path="asistencia/reportes/alumno" element={<StudentReportPage />} />
           <Route path="asistencia/:dayId" element={<AttendanceDayPage />} />
         </Route>
       </Route>

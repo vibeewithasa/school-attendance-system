@@ -110,6 +110,12 @@ export function AttendancePage() {
           : 'Consulta de supervisión: no se captura desde esta cuenta.'}
       </p>
 
+      <p className="mt-2 text-sm">
+        <Link to="/asistencia/reportes/grupo" className="font-semibold text-tinto-700 underline">
+          Reportes de asistencia por grupo y por alumno
+        </Link>
+      </p>
+
       {loading && !today && (
         <p role="status" className="mt-6 text-slate-700">
           Cargando…

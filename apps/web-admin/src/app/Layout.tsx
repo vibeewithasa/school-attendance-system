@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, NavLink, Outlet } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { Emblem } from '../components/Emblem';
 import { useAuth } from '../features/auth/AuthProvider';
 import { permissionsOf } from '../lib/permissions';
@@ -11,6 +11,8 @@ export function Layout() {
   const { state, logout } = useAuth();
   const [closing, setClosing] = useState(false);
   const [logoutError, setLogoutError] = useState(false);
+  const { pathname } = useLocation();
+  const inReports = pathname.startsWith('/asistencia/reportes');
   const me = state.status === 'authenticated' ? state.me : null;
 
   async function onLogout() {
@@ -66,8 +68,19 @@ export function Layout() {
               </NavLink>
             )}
             {permissionsOf(me).canViewAttendance && (
-              <NavLink to="/asistencia" className={navClass}>
+              <NavLink
+                to="/asistencia"
+                className={({ isActive }) => navClass({ isActive: isActive && !inReports })}
+              >
                 Asistencia
+              </NavLink>
+            )}
+            {permissionsOf(me).canViewAttendance && (
+              <NavLink
+                to="/asistencia/reportes/grupo"
+                className={() => navClass({ isActive: inReports })}
+              >
+                Reportes de asistencia
               </NavLink>
             )}
             {permissionsOf(me).canViewPrefectAssignments && (

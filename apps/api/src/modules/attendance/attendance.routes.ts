@@ -6,6 +6,9 @@
  *  - Respuestas con `Cache-Control: no-store` (contienen datos de menores).
  */
 import {
+  attendanceGroupReportQuery,
+  attendanceReportEmptyQuery,
+  attendanceStudentReportQuery,
   finalizeAttendanceDayBody,
   listAttendanceDaysQuery,
   listAttendanceEventsQuery,
@@ -58,6 +61,8 @@ export function attendanceRoutes(app: FastifyInstance, options: AttendanceRoutes
     preHandler: [guards.adminGuard(options.mfaDeferredAllowed), guards.csrfGuard],
   };
   const idParams = z.object({ id: userIdSchema }).strict();
+  const groupParams = z.object({ groupId: userIdSchema }).strict();
+  const studentParams = z.object({ studentId: userIdSchema }).strict();
 
   const invalid = (request: FastifyRequest, reply: FastifyReply) =>
     reply.code(400).send(errorBody('VALIDATION_ERROR', 'Datos no válidos', request.id));
@@ -135,5 +140,40 @@ export function attendanceRoutes(app: FastifyInstance, options: AttendanceRoutes
     const q = listAttendanceEventsQuery.safeParse(request.query);
     if (!p.success || !q.success) return invalid(request, reply);
     return send(request, reply, await service.events(context(request), p.data.id, q.data));
+  });
+
+  // ---- Reportes basicos (SOLO LECTURA; mismo permiso attendance:read y mismo alcance que las listas). Ver reportes-asistencia.md.
+  app.get('/attendance/reports/options', read, async (request, reply) => {
+    if (!attendanceReportEmptyQuery.safeParse(request.query ?? {}).success)
+      return invalid(request, reply);
+    return send(request, reply, await service.reportOptions(context(request)));
+  });
+
+  app.get('/attendance/reports/group/:groupId/students', read, async (request, reply) => {
+    const p = groupParams.safeParse(request.params);
+    if (!p.success || !attendanceReportEmptyQuery.safeParse(request.query ?? {}).success)
+      return invalid(request, reply);
+    return send(
+      request,
+      reply,
+      await service.reportGroupStudents(context(request), p.data.groupId),
+    );
+  });
+
+  app.get('/attendance/reports/group', read, async (request, reply) => {
+    const q = attendanceGroupReportQuery.safeParse(request.query);
+    if (!q.success) return invalid(request, reply);
+    return send(request, reply, await service.reportGroup(context(request), q.data));
+  });
+
+  app.get('/attendance/reports/student/:studentId', read, async (request, reply) => {
+    const p = studentParams.safeParse(request.params);
+    const q = attendanceStudentReportQuery.safeParse(request.query);
+    if (!p.success || !q.success) return invalid(request, reply);
+    return send(
+      request,
+      reply,
+      await service.reportStudent(context(request), p.data.studentId, q.data),
+    );
   });
 }

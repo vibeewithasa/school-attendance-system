@@ -230,7 +230,7 @@ Cada decisión de abajo presenta una situación real, por qué importa, las opci
 
 **Por qué importa.** La falta se tomó como «Ausente». El justificante no debe borrarla (así lo definió la escuela), pero puede cambiar cómo se cuenta en reportes, porcentajes y alertas.
 
-**Mientras se decide.** No existe todavía el módulo de justificantes. La asistencia tomada no se toca.
+**Mientras se decide.** No existe todavía el módulo de justificantes. La asistencia tomada no se toca. Los reportes básicos del portal (por grupo y por alumno) muestran únicamente las marcas registradas y lo dicen en pantalla: **no** separan faltas justificadas de injustificadas ni calculan porcentajes ni alertas hasta que la escuela decida esto (ver [reportes-asistencia.md](../architecture/reportes-asistencia.md)).
 
 | Opción                                                                     | Ventajas                   | Riesgos                                     |
 | -------------------------------------------------------------------------- | -------------------------- | ------------------------------------------- |
