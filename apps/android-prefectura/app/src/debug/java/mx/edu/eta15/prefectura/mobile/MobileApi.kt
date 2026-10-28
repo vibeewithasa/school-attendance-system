@@ -7,7 +7,7 @@ sealed interface ApiResult<out T> {
     data class Ok<T>(val value: T) : ApiResult<T>
 
     /** `status` = 0 cuando no hubo respuesta (sin red, tiempo agotado, servidor apagado). */
-    data class Failure(val status: Int, val code: String?) : ApiResult<Nothing> {
+    data class Failure(val status: Int, val code: String?, val retryAfterSeconds: Int? = null) : ApiResult<Nothing> {
         val isNetwork: Boolean get() = status == 0
     }
 }

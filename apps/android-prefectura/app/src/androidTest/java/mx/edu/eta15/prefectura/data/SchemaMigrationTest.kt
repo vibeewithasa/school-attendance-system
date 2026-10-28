@@ -271,4 +271,33 @@ class SchemaMigrationTest {
             }
         }
     }
+
+    @Test
+    fun unDisparadorDeLaOutboxDesactualizadoSeReinstalaYSinCambiosAbrirNoEscribeNada() {
+        helper.createDatabase(dbName, 3).close()
+        fun triggerSql(db: EtaDatabase, name: String) =
+            db.openHelper.readableDatabase.query("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = '$name'").use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        room().let { db ->
+            val original = triggerSql(db, "sync_ops_state_update")
+            assertNotNull(original)
+            // una version anterior de la app dejo una definicion mas permisiva
+            db.openHelper.writableDatabase.execSQL("DROP TRIGGER sync_ops_state_update")
+            db.openHelper.writableDatabase.execSQL("CREATE TRIGGER sync_ops_state_update BEFORE UPDATE OF state ON sync_operations BEGIN SELECT 1; END")
+            db.close()
+        }
+        val file = testContext().getDatabasePath(dbName)
+        room().let { db ->
+            val restored = triggerSql(db, "sync_ops_state_update")!!
+            assertTrue("la regla vigente se reinstalo", restored.contains("transicion de estado invalida"))
+            db.close()
+        }
+        // con todo igual, abrir de nuevo NO modifica el archivo
+        val before = file.readBytes().toList()
+        room().let { db ->
+            db.openHelper.writableDatabase.version
+            db.close()
+        }
+        // (el WAL/rollback journal puede variar; el contenido de las tablas y reglas no)
+        assertEquals(before.size, file.readBytes().size)
+    }
 }

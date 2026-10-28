@@ -251,4 +251,76 @@ class OfflineCacheEncryptedTest {
             db2.close()
         }
     }
+
+    @Test
+    fun elReciboConfirmadoPersisteCifradoAlReiniciarSinDatosEnClaro() = runBlocking<Unit> {
+        val profile = SandboxIds.profile(device)
+        val group = SandboxIds.group(profile, g1)
+        val db1 = storage.open()
+        OfflineCacheStore(db1, clock, policy).commit(spec())
+        val repo1 = LocalAttendanceRepository(db1, profile, clock, access = ProfileAccessGate(db1, profile, clock, policy))
+        val draft = (repo1.openTodayDraft(group) as OpenDraftResult.Ready).draftId
+        repo1.setMark(draft, SandboxIds.student(group, s1), AttendanceMark.PRESENT)
+        repo1.setMark(draft, SandboxIds.student(group, s2), AttendanceMark.ABSENT)
+        val prepared = repo1.prepareForSync(draft) as PrepareResult.Prepared
+        // recibos de un envio completo (lo que persiste el transporte manual de debug)
+        val store = OutboxStore(db1, clock)
+        val open = db1.outboxDao().allOf(profile).single { it.kind == "OPEN" }
+        val dayId = "dia-confirmado-" + System.nanoTime()
+        assertTrue(store.beginSending(open.id))
+        assertTrue(store.acknowledge(open.id, dayId, 1, 0, replayed = false))
+        assertTrue(store.resolveContext(prepared.operationId, dayId, 1))
+        assertTrue(store.beginSending(prepared.operationId))
+        assertTrue(store.acknowledge(prepared.operationId, dayId, 2, 2, replayed = false))
+        db1.close() // "se cierra la aplicacion"
+
+        val db2 = storage.open()
+        try {
+            val ops = db2.outboxDao().allOf(profile)
+            assertEquals(setOf("ACKNOWLEDGED"), ops.map { it.state }.toSet())
+            val save = ops.single { it.kind == "SAVE_MARKS" }
+            assertEquals(2, save.ackRevision)
+            assertEquals(dayId, save.serverDayId)
+            assertEquals(prepared.requestId, save.requestId)
+            // y la operacion confirmada no se puede deshacer ni reescribir
+            val repo2 = LocalAttendanceRepository(db2, profile, clock, access = ProfileAccessGate(db2, profile, clock, policy))
+            assertEquals(SetMarkResult.UnmarkAfterAck, repo2.setMark(draft, SandboxIds.student(group, s1), null))
+            assertTrue(repo2.prepareForSync(draft) is PrepareResult.AlreadyPrepared)
+        } finally {
+            db2.close()
+        }
+        val raw = String(secureFile.readBytes(), Charsets.ISO_8859_1)
+        for (secret in listOf(dayId, prepared.requestId, "ACKNOWLEDGED", "SAVE_MARKS"))
+            assertFalse("no debe aparecer en claro: $secret", raw.contains(secret))
+    }
+
+    /**
+     * Auditoria 45: el PRIMER arranque puede abrirse desde dos sitios a la vez (el contenedor de la aplicacion y quien reintenta o prueba).
+     * Sin serializar la creacion de la clave, uno retira (`destroy`) la clave que el otro acaba de crear y la base queda cifrada con una
+     * clave que ya no existe (KeyMissing, fail closed pero inutilizable). Aperturas concurrentes sobre un almacenamiento NUEVO.
+     */
+    @Test
+    fun laPrimeraAperturaConcurrenteNoDestruyeLaClaveDeLaOtra() {
+        repeat(6) { trial ->
+            wipe()
+            val start = java.util.concurrent.CountDownLatch(1)
+            val errors = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
+            val threads = (1..6).map {
+                Thread {
+                    try {
+                        start.await()
+                        storage.open().close() // cada hilo con su propia instancia de SecureStorage (como el contenedor y la prueba)
+                    } catch (e: Throwable) {
+                        errors += e
+                    }
+                }
+            }
+            threads.forEach { it.start() }
+            start.countDown()
+            threads.forEach { it.join() }
+            assertTrue("intento $trial: apertura concurrente fallo: ${errors.map { it.javaClass.simpleName + ' ' + it.message }}", errors.isEmpty())
+            // y despues la base SIGUE abriendo con su clave (no quedo cifrada con una clave perdida)
+            storage.open().close()
+        }
+    }
 }

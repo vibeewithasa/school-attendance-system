@@ -506,6 +506,8 @@ Sin duplicados y sin pérdida de borradores son **invariantes transversales**: t
 
 Ninguna alternativa se marca como oficial ni se atribuye a la institución.
 
+Versión para la escuela (lenguaje no técnico, con situaciones concretas y preguntas exactas): [docs/product/decisiones-operativas-eta15.md](../product/decisiones-operativas-eta15.md). Equivalencias: D-01 = B-2, D-02 = B-4, D-03 = B-6, D-05 = B-3, D-06 = B-1, D-07 = B-7, D-08 = B-5 y B-8; D-04 (finalización), D-09 (responsabilidad del registro) y D-10 (justificantes y reportes) son nuevas.
+
 ## 17. Plan de implementación (cada fase con su revisión; ninguna se ejecuta ahora)
 
 | Fase | Contenido                                                                                                      | Compuerta                                                                                 |
@@ -709,7 +711,7 @@ El `requestId`, el payload, el hash, la fecha escolar y su procedencia se sellan
 
 ### 21.4 Lo que NO existe
 
-Cliente HTTP de asistencia, `WorkManager`, reintentos, resolución de `409`, finalización móvil, capturas históricas y correcciones. El E2E contra el sandbox registró **0** peticiones `/attendance`; el release no declara `INTERNET`.
+Cliente HTTP de asistencia, `WorkManager`, reintentos, resolución de `409`, finalización móvil, capturas históricas y correcciones **en esta fase** (el transporte manual llega en §22). El E2E contra el sandbox registró **0** peticiones `/attendance`; el release no declara `INTERNET`.
 
 ### 21.5 Contrato pendiente para la fase de transporte
 
@@ -717,6 +719,45 @@ Cliente HTTP de asistencia, `WorkManager`, reintentos, resolución de `409`, fin
 2. Cliente `SAVE_MARKS` con `requestId` y `expectedRevision`; recibos `replayed` idempotentes; `409` → `CONFLICT`/`NEEDS_REVIEW`.
 3. Programador de segundo plano con reintentos acotados y reglas de red; `AUTH_REQUIRED` al expirar la sesión móvil.
 4. Decisiones institucionales pendientes (§16.B): capturas tardías, listas finalizadas y conservación local. Ninguna se asume.
+
+## 22. Fase 4: transporte HTTP MANUAL de asistencia desde Android (IMPLEMENTADO solo en el build debug contra el sandbox)
+
+Rama `feat/android-manual-sync-sandbox`, apilada sobre el PR #7 → #6 → #5 → #4 → #3 → #2 (todos Draft). Cierra el primer circuito: tomar lista sin internet y enviarla **manualmente** al recuperar la conexión. **No cambia el backend, PostgreSQL ni `eta15_dev`**; ADR 0005 y 0006 siguen **PROPUESTOS**. Detalle de la implementación, de las decisiones y de las pruebas: [android-prefectura.md](android-prefectura.md) (sección «Transporte manual de asistencia»).
+
+### 22.1 Cómo cumple el diseño (§§ 7, 13 y 19)
+
+| Concepto del diseño                       | En Android                                                                                                                                                                                                                                        |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `open` antes de `saveMarks`               | Un ciclo consulta «hoy» (`GET today`); si la lista existe la reutiliza sin escribir, si no la abre (`POST days`). El recibo (`dayId`, revisión) se persiste en Room.                                                                              |
+| `requestId` estable e identidad inmutable | Los sella «Preparar» (UUID, payload mínimo, huella `marksHash`); el transporte **solo reenvía** lo sellado. `dayId` y `expectedRevision` se completan antes de enviar y no son parte de la identidad.                                             |
+| Resultado desconocido                     | `SENDING` se persiste antes de la petición; red caída, timeout, muerte del proceso, cancelación o fallo de Room al guardar el recibo → `RETRYABLE_ERROR`. El siguiente ciclo **manual** reenvía lo mismo y el servidor responde `replayed: true`. |
+| Conflicto (`expectedRevision`)            | Antes de enviar se compara la lista fresca con lo último confirmado por el dispositivo; si cambió o hay marcas ajenas distintas → `CONFLICT` **sin enviar**; un `409 REVISION_CONFLICT` también. Nunca se resuelve solo ni se sobrescribe.        |
+| Pendiente no es borrar                    | El payload solo lleva marcas explícitas; una marca confirmada no vuelve a Pendiente.                                                                                                                                                              |
+| Fecha                                     | La autoridad es el `schoolToday` del servidor; fecha distinta o histórica → `NEEDS_REVIEW`; solo se **verifica** (repite) un envío anterior de resultado desconocido, nunca se crea uno histórico nuevo.                                          |
+
+### 22.2 Activación y seguridad
+
+Solo en `src/debug`; en release no existe el motor, el cliente HTTP, DPoP ni el botón (el `classes.dex` de release no los contiene) y el manifiesto sigue sin `INTERNET`. Requiere vinculación, clave en el Keystore, perfil del mismo dispositivo y las opciones `mobile.attendanceRead` y `mobile.attendanceWrite` del servidor de pruebas. Nada la dispara salvo la pulsación de «Sincronizar ahora»; un solo ciclo a la vez; cancelable. Una prueba DPoP nueva por petición; el `requestId` no se confunde con el `jti`.
+
+### 22.3 Lo que NO existe
+
+Sincronización automática, `WorkManager`, finalización móvil, capturas históricas, correcciones, resolución de conflictos o de `NEEDS_REVIEW` (la política es conservadora y requiere una decisión de la escuela), producción y datos reales.
+
+### 22.4 Resultados (datos ficticios)
+
+JVM 168 (debug) y 71 (release) tras la auditoría 45, instrumentadas 173 y **E2E 51/51** contra el servidor de pruebas con PostgreSQL 18 desechable: **9 GET y 4 POST** de asistencia en todo el escenario (1 OPEN + 3 SAVE_MARKS: envío, envío con respuesta perdida y su repetición idempotente), cero duplicados en el servidor, cero respuestas 401, **0 peticiones al recuperar la conexión sin pulsar nada**. Ver el detalle en android-prefectura.md.
+
+### 22.5 Auditoría independiente (Prompt 45)
+
+Tres defectos demostrados y corregidos: una operación bloqueada de otra fecha impedía sincronizar la lista de hoy; el backend real responde **401** `DEVICE_REVOKED` (el cliente solo bloqueaba con 403); y el primer arranque del almacenamiento cifrado tenía una carrera (dos aperturas simultáneas destruían la clave). Más un endurecimiento del arranque del ciclo. Contrato cliente/backend verificado con 12 vectores del backend real. E2E adicionales: padrón cambiado (incorporado y dado de baja) 27/27, fallo real de Room + finalización web + revocaciones 41/41, fecha escolar (sábado y jueves) 12/12 cada una; concurrencia con PostgreSQL 18 real (`test:pg-temp`) 611/611. Detalle y límites en [android-prefectura.md](android-prefectura.md).
+
+### 22.6 Estabilización (Prompt 46)
+
+El padrón vigente del grupo se compara con el de la captura **antes de abrir** una lista nueva (sin cambiar el backend; si cambia entre la comparación y OPEN, la validación posterior de las marcas lo detecta y no se envía nada); la apertura del almacenamiento cifrado se probó con fallos inyectados de Keystore (temporal = recuperable; permanente = falla cerrado y conserva todo). Detalle en [android-prefectura.md](android-prefectura.md). Las decisiones que requieren a la escuela están redactadas para ella en [docs/product/decisiones-operativas-eta15.md](../product/decisiones-operativas-eta15.md) (D-01 a D-10, todas PENDIENTES; la tabla B-1…B-10 de §16 sigue siendo la referencia técnica).
+
+### 22.7 Pendiente
+
+Política institucional para `NEEDS_REVIEW`/`CONFLICT` (quién y cómo los resuelve), capturas tardías, conservación local, una sincronización automática (con su propio ADR y pruebas), finalización móvil y la aprobación de los ADR 0005 y 0006.
 
 ## Qué cubre y qué no este diseño
 

@@ -227,6 +227,19 @@ class OutboxStore(
     suspend fun operationsOf(profileId: String, groupId: String, date: String): List<SyncOperationEntity> =
         outbox.operationsOf(profileId, groupId, date)
 
+    /** Operaciones no terminales del grupo (cualquier fecha). */
+    suspend fun activeOperations(profileId: String, groupId: String): List<SyncOperationEntity> = outbox.activeOf(profileId, groupId)
+
+    suspend fun operation(profileId: String, id: String): SyncOperationEntity? = outbox.find(profileId, id)
+
+    /** Padron congelado del borrador (identificadores del servidor, en minuscula). */
+    suspend fun localRoster(draftId: String): Set<String> = outbox.rosterRemoteIds(draftId).map { it.lowercase() }.toSet()
+
+    /** Alumnos con marca ya CONFIRMADA por el servidor para este borrador. */
+    suspend fun acknowledgedStudentIds(draftId: String): Set<String> = outbox.acknowledgedStudents(draftId).map { it.lowercase() }.toSet()
+
+    suspend fun draftIdFor(profileId: String, groupId: String, date: String): String? = drafts.findDraftId(profileId, groupId, date)
+
     suspend fun payloadOf(operationId: String): List<WireMark> =
         outbox.payloadOf(operationId).map { WireMark(it.studentRemoteId, it.status) }
 

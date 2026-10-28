@@ -299,6 +299,21 @@ interface OutboxDao {
     @Query("SELECT COUNT(*) FROM sync_operations WHERE profileId = :profileId")
     suspend fun count(profileId: String): Int
 
+    /** Operaciones de un grupo que aun no son terminales, de cualquier fecha (las confirmadas se consultan por separado). */
+    @Query(
+        "SELECT * FROM sync_operations WHERE profileId = :profileId AND groupId = :groupId AND state NOT IN ('ACKNOWLEDGED', 'SUPERSEDED', 'DISCARDED') ORDER BY schoolDate, seq",
+    )
+    suspend fun activeOf(profileId: String, groupId: String): List<SyncOperationEntity>
+
+    /** Identificadores en el servidor de los alumnos del PADRON CONGELADO del borrador (renglones de `attendance_marks`). */
+    @Query(
+        """
+        SELECT s.remoteId FROM attendance_marks m JOIN students s ON s.id = m.studentId
+         WHERE m.draftId = :draftId AND s.remoteId IS NOT NULL
+        """,
+    )
+    suspend fun rosterRemoteIds(draftId: String): List<String>
+
     /** Alumnos (identificador del servidor) con marca en operaciones CONFIRMADAS por el servidor: ya no pueden quedar Pendientes. */
     @Query(
         """

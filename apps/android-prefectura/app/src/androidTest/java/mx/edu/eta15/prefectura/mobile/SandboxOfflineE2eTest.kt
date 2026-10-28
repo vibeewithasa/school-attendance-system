@@ -59,7 +59,7 @@ class SandboxOfflineE2eTest {
     private val ctx = testContext()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val clock: Clock = Clock.systemUTC()
-    private val policy = OfflinePolicy(Duration.ofMinutes(15))
+    private val policy get() = OfflinePolicy(Duration.ofMinutes(args.getString("validityMinutes")?.toLong() ?: 15))
 
     private fun say(text: String) = Log.i(TAG, text)
 

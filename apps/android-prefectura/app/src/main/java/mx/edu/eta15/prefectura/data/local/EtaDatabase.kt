@@ -94,6 +94,7 @@ abstract class EtaDatabase : RoomDatabase() {
         val integrityCallback = object : Callback() {
             override fun onOpen(db: SupportSQLiteDatabase) {
                 super.onOpen(db)
+                OutboxSql.reinstallChanged(db) // reglas de la outbox corregidas (maquina de estados vigente); sin cambios no escribe nada
                 INTEGRITY_SQL.forEach(db::execSQL)
             }
         }

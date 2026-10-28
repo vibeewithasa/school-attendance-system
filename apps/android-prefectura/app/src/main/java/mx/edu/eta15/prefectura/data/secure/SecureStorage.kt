@@ -36,8 +36,14 @@ class SecureStorage(
     private val legacyFile get() = context.getDatabasePath(legacyName)
     private val tmpName get() = "$secureName.converting"
 
-    /** Abre (o crea) la base cifrada. Operacion bloqueante: llamar fuera del hilo principal. */
-    fun open(): EtaDatabase {
+    /**
+     * Abre (o crea) la base cifrada. Operacion bloqueante: llamar fuera del hilo principal. Esta serializada en TODO el proceso: el
+     * primer arranque puede abrirse desde dos sitios a la vez (el contenedor de la aplicacion y un reintento) y, sin el cerrojo, uno
+     * retira la clave que el otro acaba de crear y la base queda cifrada con una clave perdida (auditoria 45, reproducido con una prueba).
+     */
+    fun open(): EtaDatabase = synchronized(OPEN_LOCK) { openSerialized() }
+
+    private fun openSerialized(): EtaDatabase {
         loadNativeLibrary()
         cleanupInterruptedConversion()
         if (secureFile.exists()) {
@@ -250,6 +256,9 @@ class SecureStorage(
     }
 
     companion object {
+        /** Cerrojo de todo el proceso para abrir/crear la base y su clave (ver [open]). */
+        private val OPEN_LOCK = Any()
+
         /** Base cifrada. */
         const val SECURE_NAME = "eta15_secure.db"
 
