@@ -20,6 +20,12 @@ data class Group(
     /** Alumnos con marca en el borrador de HOY (0 si no hay borrador). */
     val markedToday: Int,
     val hasDraftToday: Boolean,
+    /** El grupo dejo de estar autorizado (cache offline): su padron y su captura estan bloqueados; los borradores se conservan. */
+    val revoked: Boolean = false,
+    /** Momento de la ultima descarga COMPLETA del padron (solo grupos descargados del servidor de pruebas). */
+    val downloadedAt: Instant? = null,
+    /** Hay borradores con una discrepancia (p. ej. el padron cambio) que una persona debe revisar. */
+    val needsReview: Boolean = false,
 )
 
 /** Datos minimos del alumno para pasar lista: nunca un expediente (sin CURP, tutores, fotografia ni datos medicos). */
@@ -49,6 +55,9 @@ data class DraftState(
     val requestId: String,
     val rows: List<CaptureRow>,
     val updatedAt: Instant,
+    /** Una persona debe revisar este borrador (p. ej. el padron descargado despues es distinto); nunca se corrige solo. */
+    val needsReview: Boolean = false,
+    val reviewReason: String? = null,
 ) {
     val summary: DraftSummary
         get() = DraftSummary(
@@ -58,8 +67,44 @@ data class DraftState(
         )
 }
 
+/** Por que una consulta escolar protegida esta bloqueada (cache offline del servidor de PRUEBAS). */
+enum class AccessBlock {
+    /** Vencio la vigencia offline de DEMOSTRACION: hay que reconectar y volver a validar. */
+    EXPIRED,
+
+    /** El servidor informo que el dispositivo fue revocado. */
+    DEVICE_REVOKED,
+
+    /** El servidor informo que la cuenta ya no puede usar el canal movil (desactivada o sin el rol). */
+    ACCOUNT_BLOCKED,
+
+    /** El reloj del telefono retrocedio: no se confia en la fecha hasta reconectar. */
+    CLOCK_SUSPECT,
+}
+
+/** Autorizacion offline vigente para un perfil. En la demostracion local no aplica ([NotApplicable]). */
+sealed interface OfflineAccess {
+    data object NotApplicable : OfflineAccess
+
+    /** `dateConfirmed` = la fecha escolar del telefono coincide con la ultima fecha confirmada por el servidor. */
+    data class Active(val until: Instant, val dateConfirmed: Boolean) : OfflineAccess
+
+    data class Blocked(val reason: AccessBlock) : OfflineAccess
+}
+
+/** Ultimo contacto valido con el servidor de pruebas, mostrado en la interfaz. */
+data class SyncInfo(
+    val lastDownloadAt: Instant,
+    val lastContactAt: Instant,
+    /** Fecha escolar confirmada por el servidor en esa descarga (America/Mazatlan). */
+    val serverSchoolDate: LocalDate,
+)
+
 /** Resultado de abrir (u obtener) el borrador de hoy para un grupo. */
 sealed interface OpenDraftResult {
+    data class AccessBlocked(val reason: AccessBlock) : OpenDraftResult
+    data object GroupRevoked : OpenDraftResult
+
     data class Ready(val draftId: String, val created: Boolean) : OpenDraftResult
     data class NotSchoolDay(val date: LocalDate) : OpenDraftResult
     data object GroupNotFound : OpenDraftResult
@@ -68,6 +113,9 @@ sealed interface OpenDraftResult {
 
 /** Resultado de cambiar una marca. */
 sealed interface SetMarkResult {
+    data class AccessBlocked(val reason: AccessBlock) : SetMarkResult
+    data object GroupRevoked : SetMarkResult
+
     data object Saved : SetMarkResult
     /** El borrador no es de la fecha escolar de hoy (p. ej. cruzo la medianoche): ya no se modifica. */
     data object DraftNotEditable : SetMarkResult

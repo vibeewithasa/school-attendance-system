@@ -11,7 +11,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mx.edu.eta15.prefectura.data.AndroidNetworkMonitor
+import java.time.Duration
 import mx.edu.eta15.prefectura.data.LocalAttendanceRepository
+import mx.edu.eta15.prefectura.data.OfflineCacheStore
+import mx.edu.eta15.prefectura.data.ProfileAccessGate
+import mx.edu.eta15.prefectura.domain.OfflinePolicy
 import mx.edu.eta15.prefectura.data.NetworkMonitor
 import mx.edu.eta15.prefectura.data.local.EtaDatabase
 import mx.edu.eta15.prefectura.data.secure.SecureStorage
@@ -48,12 +52,32 @@ class AppContainer(
     val networkMonitor: NetworkMonitor = NetworkMonitor.Unknown,
     private val secureStorage: SecureStorage? = null,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    /** Vigencia offline de DEMOSTRACION (SANDBOX ONLY; se fija al compilar con -Peta15.offlineValidityMinutes). */
+    private val offlinePolicy: OfflinePolicy = OfflinePolicy(Duration.ofMinutes(BuildConfig.OFFLINE_VALIDITY_MINUTES.toLong())),
 ) {
     private val _storage = MutableStateFlow<StorageState>(StorageState.Opening)
     val storage: StateFlow<StorageState> = _storage
 
     @Volatile
     private var db: EtaDatabase? = null
+
+    /** Cache offline del servidor de pruebas (misma base cifrada); `null` mientras el almacenamiento no esta abierto. */
+    val offlineCache: OfflineCacheStore? get() = db?.let { OfflineCacheStore(it, clock, offlinePolicy) }
+
+    /**
+     * Repositorio de un perfil DESCARGADO (SANDBOX) con su vigencia offline y revocaciones. Es otro perfil que el de la
+     * demostracion: nunca comparten grupos, alumnos ni borradores.
+     */
+    fun sandboxRepository(profileId: String): AttendanceRepository? {
+        val database = db ?: return null
+        return LocalAttendanceRepository(
+            database,
+            profileId,
+            clock,
+            ids,
+            access = ProfileAccessGate(database, profileId, clock, offlinePolicy),
+        )
+    }
 
     fun start() {
         scope.launch { openAndSeed() }

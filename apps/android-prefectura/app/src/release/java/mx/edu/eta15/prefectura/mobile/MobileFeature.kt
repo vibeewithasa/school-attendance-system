@@ -1,14 +1,21 @@
 package mx.edu.eta15.prefectura.mobile
 
+import android.content.Context
 import androidx.compose.runtime.Composable
+import mx.edu.eta15.prefectura.data.OfflineSink
 
 /** Release: la vinculacion experimental no existe (ni claves de dispositivo, ni cliente de red, ni permiso de red). */
 object MobileFeature {
     const val AVAILABLE = false
 
+    /** Sin vinculacion no hay cache descargada: en release siempre es nulo. */
+    @Suppress("UNUSED_PARAMETER")
+    fun sandboxProfileId(context: Context): String? = null
+
     @Composable
     fun HomeEntry(onOpen: () -> Unit) = Unit
 
     @Composable
-    fun Screen(onBack: () -> Unit) = Unit
+    @Suppress("UNUSED_PARAMETER")
+    fun Screen(onBack: () -> Unit, cache: OfflineSink? = null, onOpenOffline: () -> Unit = {}) = Unit
 }

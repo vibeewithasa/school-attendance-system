@@ -63,16 +63,14 @@ private class FakeStore : LinkStore {
     }
 }
 
-private class ScriptedApi : MobileApi {
+private class ScriptedApi(private val approved: () -> Boolean) : MobileApi {
     private val now = Instant.now()
-    var statusIndex = 0
-    val statuses = listOf("claimed", "approved")
 
     override suspend fun enroll(jwk: EcJwk, label: String): ApiResult<EnrollCreated> =
         ApiResult.Ok(EnrollCreated("22222222-0000-4000-8000-000000000001", "ABCD-2345", jwk.shortFingerprint(), now.plusSeconds(600)))
 
     override suspend fun enrollStatus(requestId: String): ApiResult<EnrollStatus> {
-        val s = statuses[minOf(statusIndex++, statuses.lastIndex)]
+        val s = if (approved()) "approved" else "claimed"
         return ApiResult.Ok(EnrollStatus(s, now.plusSeconds(600), JWK.shortFingerprint(), "Prefecta Ficticia"))
     }
 
@@ -102,11 +100,15 @@ class MobileLinkScreenTest {
     private val key = FakeKey()
     private val store = FakeStore()
 
+    /** La aprobacion del portal la da la prueba, no el reloj: asi la pantalla del codigo no depende de una carrera de 400 ms. */
+    @Volatile
+    private var approved = false
+
     @After
     fun tearDown() = scope.cancel()
 
     private fun show(): MobileLinkController {
-        val controller = MobileLinkController(key, store, { ScriptedApi() }, scope, pollMillis = 200)
+        val controller = MobileLinkController(key, store, { ScriptedApi { approved } }, scope, pollMillis = 200)
         rule.setContent {
             EtaTheme {
                 val state by controller.state.collectAsStateWithLifecycle()
@@ -138,6 +140,7 @@ class MobileLinkScreenTest {
         rule.onNodeWithTag("mobile-pairing-code").assertTextContains("ABCD-2345")
         rule.onNodeWithTag("mobile-request-id").assertTextContains("22222222-0000-4000-8000-000000000001")
         rule.onNodeWithTag("mobile-fingerprint").assertTextContains(JWK.shortFingerprint())
+        approved = true
         waitForTag("mobile-linked")
         assertEquals(Stage.LINKED, controller.state.value.stage)
         assertEquals("Prefecta Ficticia", controller.state.value.owner)

@@ -32,6 +32,9 @@ android {
             buildConfigField("String", "DEV_HEALTH_URL", "\"http://10.0.2.2:3000/health\"")
             // Servidor de PRUEBAS de la vinculacion experimental (ADR 0005, propuesta). Solo debug y solo el anfitrion del emulador.
             buildConfigField("String", "MOBILE_BASE_URL", "\"http://10.0.2.2:3000\"")
+            // Vigencia offline de DEMOSTRACION en minutos (SANDBOX ONLY). Se puede acortar para ensayar el vencimiento:
+            // gradlew ... -Peta15.offlineValidityMinutes=2
+            buildConfigField("int", "OFFLINE_VALIDITY_MINUTES", (project.findProperty("eta15.offlineValidityMinutes") ?: "30").toString())
         }
         release {
             isMinifyEnabled = true
@@ -40,6 +43,7 @@ android {
             buildConfigField("boolean", "DEMO_MODE", "false")
             buildConfigField("String", "DEV_HEALTH_URL", "\"\"")
             buildConfigField("String", "MOBILE_BASE_URL", "\"\"")
+            buildConfigField("int", "OFFLINE_VALIDITY_MINUTES", "0")
             // Sin signingConfig: la firma release se disenara antes de cualquier distribucion.
         }
     }

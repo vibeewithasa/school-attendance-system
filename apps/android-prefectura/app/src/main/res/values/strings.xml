@@ -127,4 +127,42 @@
     <string name="license_notice">Base cifrada con SQLCipher Community Edition, © ZETETIC LLC (licencia BSD de 3 cláusulas).</string>
     <string name="license_show">Ver texto de la licencia</string>
     <string name="license_hide">Ocultar texto de la licencia</string>
+
+    <!-- Cache offline del servidor de PRUEBAS (SANDBOX ONLY) -->
+    <string name="offline_groups_title">Grupos descargados</string>
+    <string name="offline_banner_title">DATOS DE PRUEBA DESCARGADOS (SANDBOX)</string>
+    <string name="offline_banner_detail">Copia cifrada en este dispositivo de los grupos autorizados que se descargaron. La captura se guarda solo aquí y no se envía a la escuela.</string>
+    <string name="offline_last_update">Última descarga: %1$s</string>
+    <string name="offline_server_date">Fecha escolar confirmada por el servidor: %1$s</string>
+    <string name="offline_date_unconfirmed">La fecha de este teléfono no está confirmada por el servidor: la captura es provisional.</string>
+    <string name="offline_access_active">Acceso offline de demostración vigente hasta %1$s. Es una vigencia de ensayo (SANDBOX ONLY); la escuela no ha aprobado ninguna.</string>
+    <string name="offline_blocked_expired_title">Acceso offline de demostración vencido</string>
+    <string name="offline_blocked_expired_detail">Se requiere reconexión y validación con el servidor de pruebas. Tus borradores locales se conservan y no se envían.</string>
+    <string name="offline_blocked_device_title">Dispositivo revocado</string>
+    <string name="offline_blocked_device_detail">El servidor informó que este dispositivo fue revocado. No se muestran padrones; los borradores se conservan para una revisión posterior.</string>
+    <string name="offline_blocked_account_title">La cuenta ya no tiene acceso</string>
+    <string name="offline_blocked_account_detail">El servidor informó que esta cuenta ya no puede usar el canal móvil. No se muestran padrones; los borradores se conservan.</string>
+    <string name="offline_blocked_clock_title">Reloj del teléfono inconsistente</string>
+    <string name="offline_blocked_clock_detail">La hora del teléfono retrocedió respecto a lo ya visto. Reconecta para validar la fecha antes de seguir.</string>
+    <string name="offline_group_revoked_chip">Grupo revocado: padrón bloqueado</string>
+    <string name="offline_group_revoked_title">Grupo revocado</string>
+    <string name="offline_group_revoked_detail">Este grupo ya no está autorizado para esta persona. El padrón y la captura están bloqueados; los borradores se conservan y no se envían.</string>
+    <string name="offline_needs_review_chip">Revisión pendiente: el padrón cambió</string>
+    <string name="offline_review_notice">El padrón descargado después es distinto del que se usó para esta lista. La captura no se modificó; una persona debe revisarla.</string>
+    <string name="offline_blocked_back">Volver</string>
+    <string name="offline_none_title">Aún no hay grupos descargados</string>
+    <string name="offline_none_detail">Vincula el dispositivo de pruebas, abre una sesión y descarga tus grupos autorizados mientras tienes conexión.</string>
+    <string name="mobile_download_button">Descargar mis grupos (guardar cifrados)</string>
+    <string name="mobile_open_offline_button">Abrir grupos descargados (sin conexión)</string>
+    <string name="mobile_download_busy">Descargando y validando…</string>
+    <string name="mobile_download_ok">Descarga completa: %1$d grupo(s), %2$d bloqueado(s) por revocación.</string>
+    <string name="mobile_download_incomplete">Descarga incompleta: se conservó la copia anterior y no se guardó nada parcial.</string>
+    <string name="mobile_download_invalid">El servidor devolvió datos no válidos: no se guardó nada.</string>
+    <string name="mobile_download_none">Aún no hay descarga guardada en este dispositivo.</string>
+    <string name="mobile_purge_button">Borrar datos descargados (incluye borradores)</string>
+    <string name="mobile_purge_title">¿Borrar los datos descargados?</string>
+    <string name="mobile_purge_text">Se borran los grupos, los padrones y TAMBIÉN los borradores de captura guardados en este dispositivo. No se envía nada al servidor. Esta acción no se puede deshacer.</string>
+    <string name="capture_msg_access_blocked">Acceso bloqueado: reconecta para validar. No se guardó el cambio.</string>
+    <string name="capture_msg_group_revoked">Grupo revocado: no se guardó el cambio.</string>
+    <string name="mobile_purge_yes">Borrar todo</string>
 </resources>

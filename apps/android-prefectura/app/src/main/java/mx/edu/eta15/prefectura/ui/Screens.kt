@@ -129,6 +129,7 @@ fun GroupsScreen(state: GroupsUiState, onOpenGroup: (String) -> Unit, contentPad
             contentPadding = ScreenPadding,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            item { OfflineStatusSection(state.access, state.sync) }
             if (!state.isSchoolDay) item { InfoNotice(stringResource(R.string.weekend_notice)) }
             items(state.groups, key = { it.id }) { group -> GroupCard(group) { onOpenGroup(group.id) } }
         }
@@ -161,6 +162,22 @@ private fun GroupCard(group: Group, onClick: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+            if (group.revoked) {
+                Text(
+                    stringResource(R.string.offline_group_revoked_chip),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.testTag("group-revoked-${group.id}"),
+                )
+            }
+            if (group.needsReview) {
+                Text(
+                    stringResource(R.string.offline_needs_review_chip),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.testTag("group-review-${group.id}"),
+                )
+            }
         }
     }
 }
@@ -181,6 +198,8 @@ fun RosterScreen(state: RosterUiState, onCapture: () -> Unit, contentPadding: Pa
             title = stringResource(R.string.group_not_found),
             modifier = Modifier.padding(contentPadding),
         )
+        state.access is mx.edu.eta15.prefectura.domain.OfflineAccess.Blocked ->
+            AccessBlockedView(state.access.reason, onBack = null, modifier = Modifier.padding(contentPadding))
         else -> Column(Modifier.padding(contentPadding)) {
             Column(Modifier.padding(ScreenPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(

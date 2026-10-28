@@ -177,9 +177,19 @@ class HttpMobileApi(
         val raw = call("GET", path, proof = proof("GET", path, session.accessToken), access = session.accessToken)
         return parse(raw, setOf(200)) { o ->
             val groups: JSONArray = o.getJSONArray("groups")
+            val asOf = o.getString("asOf")
             (0 until groups.length()).map { i ->
                 val g = groups.getJSONObject(i).getJSONObject("group")
-                GroupItem(g.getString("id"), groupLabel(g), g.optString("schoolYearName"))
+                GroupItem(
+                    groupId = g.getString("id"),
+                    label = groupLabel(g),
+                    schoolYear = g.optString("schoolYearName"),
+                    grade = g.getInt("grade"),
+                    code = g.getString("code"),
+                    shift = g.optString("shift").takeIf { it.isNotBlank() && it != "null" },
+                    schoolYearId = g.getString("schoolYearId"),
+                    asOf = asOf,
+                )
             }
         }
     }
@@ -189,12 +199,20 @@ class HttpMobileApi(
         val raw = call("GET", path, proof = proof("GET", path, session.accessToken), access = session.accessToken)
         return parse(raw, setOf(200)) { o ->
             val students = o.getJSONArray("students")
+            val group = o.getJSONObject("group")
             Roster(
-                groupLabel(o.getJSONObject("group")),
+                groupLabel(group),
                 (0 until students.length()).map { i ->
                     val s = students.getJSONObject(i)
-                    RosterStudent(s.getString("id"), "${s.getString("givenNames")} ${s.getString("familyName")}")
+                    RosterStudent(
+                        s.getString("id"),
+                        "${s.getString("givenNames")} ${s.getString("familyName")}",
+                        s.getString("givenNames"),
+                        s.getString("familyName"),
+                    )
                 },
+                groupId = group.getString("id"),
+                asOf = o.getString("asOf"),
             )
         }
     }

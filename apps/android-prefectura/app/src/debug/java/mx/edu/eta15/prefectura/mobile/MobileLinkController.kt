@@ -10,6 +10,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import mx.edu.eta15.prefectura.data.DownloadSpec
+import mx.edu.eta15.prefectura.data.DownloadedGroup
+import mx.edu.eta15.prefectura.data.OfflineCacheStore
+import mx.edu.eta15.prefectura.data.OfflineSink
 
 enum class Stage { LOADING, NOT_LINKED, KEY_LOST, PAIRING, LINKED }
 
@@ -54,6 +58,8 @@ data class MobileUiState(
     val groups: List<GroupItem>? = null,
     val roster: Roster? = null,
     val issue: LinkIssue? = null,
+    /** Resultado de la ultima descarga autorizada hacia la cache cifrada (`null` = aun no se intento). */
+    val download: DownloadOutcome? = null,
 )
 
 /**
@@ -71,6 +77,8 @@ class MobileLinkController(
     private val scope: CoroutineScope,
     private val clock: Clock = Clock.systemUTC(),
     private val pollMillis: Long = 3_000,
+    /** Cache cifrada (Room) donde se guarda la descarga autorizada; `null` = sin cache (solo lectura en pantalla, como antes). */
+    private val cache: OfflineSink? = null,
 ) {
     private val _state = MutableStateFlow(MobileUiState())
     val state: StateFlow<MobileUiState> = _state
@@ -376,6 +384,88 @@ class MobileLinkController(
                 is ApiResult.Ok -> _state.update { it.copy(busy = false, roster = result.value) }
                 is ApiResult.Failure -> _state.update { it.copy(busy = false, roster = null, issue = issueOf(result)) }
             }
+        }
+    }
+
+    /**
+     * DESCARGA AUTORIZADA: mis grupos y, solo del padron de cada uno de ellos, los alumnos minimos para pasar lista. Todo o nada:
+     *  - se valida cada respuesta (ResponseValidator) antes de tocar la cache;
+     *  - un fallo de red o del servidor a mitad NO reemplaza nada y NO se declara completa (la cache anterior queda intacta);
+     *  - un 404 del padron de un grupo ya conocido significa "ya no autorizado": se bloquea ese grupo (no se borra);
+     *  - una revocacion del dispositivo o de la cuenta bloquea la cache y se conserva todo (borradores incluidos).
+     * No se descargan grupos ajenos ni alumnos para filtrarlos en el telefono: el servidor decide el alcance. No escribe nada
+     * en el servidor.
+     */
+    fun downloadAuthorized() {
+        val cacheStore = cache ?: return
+        val current = _state.value
+        if (current.busy || current.stage != Stage.LINKED) return
+        _state.update { it.copy(busy = true, issue = null, download = null) }
+        scope.launch {
+            val outcome = runDownload(cacheStore)
+            _state.update { st ->
+                st.copy(
+                    busy = false,
+                    download = outcome,
+                    issue = (outcome as? DownloadOutcome.Blocked)?.issue ?: st.issue,
+                )
+            }
+        }
+    }
+
+    private suspend fun runDownload(store: OfflineSink): DownloadOutcome {
+        val groupsResult = authed { service, s -> service.myGroups(s) }
+        val deviceId = session?.deviceId ?: _state.value.deviceId
+        if (groupsResult is ApiResult.Failure) return blockOrIncomplete(store, deviceId, groupsResult)
+        if (deviceId == null) return DownloadOutcome.NoDevice
+        val groups = ResponseValidator.groups((groupsResult as ApiResult.Ok).value) ?: return DownloadOutcome.Invalid
+        val downloaded = ArrayList<DownloadedGroup>(groups.size)
+        val revokedRemote = HashSet<String>()
+        for (g in groups) {
+            when (val r = authed { service, s -> service.roster(s, g.groupId) }) {
+                is ApiResult.Ok -> downloaded += ResponseValidator.roster(g, r.value) ?: return DownloadOutcome.Invalid
+                is ApiResult.Failure ->
+                    // "No encontrado" = el grupo ya no esta autorizado para esta persona: valido y se bloquea (no es un fallo).
+                    if (r.status == 404) revokedRemote += g.groupId else return blockOrIncomplete(store, deviceId, r)
+            }
+        }
+        val asOf = groups.firstOrNull()?.asOf ?: java.time.LocalDate.now(mx.edu.eta15.prefectura.domain.SchoolCalendar.ZONE).toString()
+        return try {
+            val r = store.commit(
+                DownloadSpec(
+                    deviceId = deviceId,
+                    ownerName = _state.value.owner ?: "Perfil de prueba",
+                    serverSchoolDate = asOf,
+                    groups = downloaded.filter { it.remoteId !in revokedRemote },
+                    revokedRemoteGroupIds = revokedRemote,
+                ),
+            )
+            DownloadOutcome.Complete(r.groupsStored, r.groupsRevoked, r.changedRosters, r.draftsFlagged)
+        } catch (_: Exception) {
+            DownloadOutcome.Incomplete // la transaccion se revirtio: la cache anterior sigue igual
+        }
+    }
+
+    private suspend fun blockOrIncomplete(store: OfflineSink, deviceId: String?, f: ApiResult.Failure): DownloadOutcome {
+        val state = when {
+            f.code == "DEVICE_REVOKED" -> OfflineCacheStore.AUTH_DEVICE_REVOKED
+            f.code == "NOT_ELIGIBLE" || f.status == 403 -> OfflineCacheStore.AUTH_ACCOUNT_BLOCKED
+            else -> null
+        }
+        if (state != null && deviceId != null) {
+            runCatching { store.markAuthState(deviceId, state) }
+            return DownloadOutcome.Blocked(if (state == OfflineCacheStore.AUTH_DEVICE_REVOKED) LinkIssue.DEVICE_REVOKED else LinkIssue.NOT_ELIGIBLE)
+        }
+        return DownloadOutcome.Incomplete
+    }
+
+    /** Borrado EXPLICITO (confirmado en pantalla) de los datos descargados de este dispositivo, borradores incluidos. */
+    fun purgeCache() {
+        val cacheStore = cache ?: return
+        val deviceId = session?.deviceId ?: _state.value.deviceId ?: store.load()?.deviceId ?: return
+        scope.launch {
+            runCatching { cacheStore.purge(deviceId) }
+            _state.update { it.copy(download = null) }
         }
     }
 

@@ -26,11 +26,26 @@ data class MobileSession(
     val deviceId: String,
 )
 
-data class GroupItem(val groupId: String, val label: String, val schoolYear: String)
+/** Grupo autorizado tal como lo entrega el servidor (solo los campos minimos; `asOf` = fecha escolar del servidor). */
+data class GroupItem(
+    val groupId: String,
+    val label: String,
+    val schoolYear: String,
+    val grade: Int = 0,
+    val code: String = "",
+    val shift: String? = null,
+    val schoolYearId: String = "",
+    val asOf: String = "",
+)
 
-data class RosterStudent(val id: String, val name: String)
+data class RosterStudent(val id: String, val name: String, val givenNames: String = "", val familyName: String = "")
 
-data class Roster(val groupLabel: String, val students: List<RosterStudent>)
+data class Roster(
+    val groupLabel: String,
+    val students: List<RosterStudent>,
+    val groupId: String = "",
+    val asOf: String = "",
+)
 
 /** Puerto del servidor de pruebas (ver HttpMobileApi). Las llamadas autenticadas reciben la sesion; ninguna envia identidades. */
 interface MobileApi {
