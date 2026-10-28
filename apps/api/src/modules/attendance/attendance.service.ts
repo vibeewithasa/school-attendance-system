@@ -72,7 +72,10 @@ export interface AttendanceContext {
   deviceId?: string | null;
 }
 
-/** Opciones de las LECTURAS. `snapshot`: una sola foto consistente de la base (ver `beginSnapshot`). */
+/**
+ * Opciones de las LECTURAS. `snapshot`: una sola foto consistente de la base (ver `beginSnapshot`); ACTIVA por omision. Solo `false`
+ * la desactiva (pruebas que reproducen la carrera original; ningun codigo de produccion lo usa).
+ */
 export interface AttendanceReadOptions {
   snapshot?: boolean;
 }
@@ -192,10 +195,12 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
    * Lecturas consistentes: el detalle de una lista se arma con varias consultas (cabecera y conteos, renglones, comparacion del
    * padron). En READ COMMITTED un guardado o una finalizacion que se confirme ENTRE ellas produciria una respuesta con conteos de
    * una revision y renglones de otra. REPEATABLE READ fija UNA foto para toda la transaccion (solo lecturas y la auditoria, que no
-   * choca con nadie: no hay reintentos por 40001). Debe ser la PRIMERA sentencia de la transaccion.
+   * choca con nadie: no hay reintentos por 40001). Debe ser la PRIMERA sentencia de la transaccion. Vale para TODA lectura (portal
+   * y canal movil): la carrera original del portal se reprodujo con una prueba determinista contra PostgreSQL real.
    */
   const beginSnapshot = async (tx: SqlClient, options?: AttendanceReadOptions): Promise<void> => {
-    if (options?.snapshot) await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    if (options?.snapshot !== false)
+      await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
   };
 
   async function denied(ctx: AttendanceContext, action: string): Promise<void> {
@@ -274,7 +279,32 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
           : fail('CONFLICT', 'Una lista finalizada no se modifica', 'DAY_FINALIZED');
       case '42P01':
         return unavailable();
+      // La base dejo de responder (conexion cortada, apagado, demasiadas conexiones): NO se aplico nada de esta transaccion y el
+      // cliente puede reintentar la MISMA operacion (el `requestId` la hace idempotente). 503 la distingue de un conflicto definitivo.
+      case '57P01':
+      case '57P02':
+      case '57P03':
+      case '53300':
+        return fail(
+          'UNAVAILABLE',
+          'La base de datos no está disponible; reintente',
+          'DATABASE_UNAVAILABLE',
+        );
       default:
+        // Errores de conexion sin codigo SQLSTATE (la base corto la conexion en medio de la transaccion).
+        if (
+          /^08/.test(e.code ?? '') ||
+          ['ECONNRESET', 'EPIPE', 'ECONNREFUSED', 'ETIMEDOUT'].includes(e.code ?? '') ||
+          (!e.code &&
+            /connection terminated|connection.*(closed|ended)|connection error/i.test(
+              e.message ?? '',
+            ))
+        )
+          return fail(
+            'UNAVAILABLE',
+            'La base de datos no está disponible; reintente',
+            'DATABASE_UNAVAILABLE',
+          );
         throw error;
     }
   }
@@ -701,18 +731,44 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
             const hash = marksHash(body.marks);
             // Reintento: si ese guardado ya se aplico, se devuelve el estado vigente sin repetir nada (aunque la
             // revision haya avanzado o la lista ya este finalizada); con otro contenido, es un error de uso.
-            const prior = await tx.query<{ payload_hash: string }>(
-              `SELECT payload_hash FROM attendance_events
+            // El recibo es durable: un guardado con cambios deja un evento por renglon cambiado y uno SIN cambios deja un evento de
+            // confirmacion (old = new, ver mas abajo); ambos llevan `request_id` y `payload_hash`. El recibo es de QUIEN lo envio:
+            // el mismo `requestId` de otra cuenta no se reconoce (no se filtra que existe) y se rechaza como uso incorrecto.
+            const prior = await tx.query<{ payload_hash: string; actor_id: string }>(
+              `SELECT payload_hash, actor_id FROM attendance_events
                 WHERE attendance_day_id = $1 AND request_id = $2 AND event_type = 'mark_changed' LIMIT 1`,
               [dayId, body.requestId],
             );
             if (prior.rows[0]) {
-              if (prior.rows[0].payload_hash !== hash)
+              const sameActor = prior.rows[0].actor_id === ctx.actorId;
+              if (prior.rows[0].payload_hash !== hash || !sameActor) {
+                // Uso incorrecto o intento ajeno: queda auditado (sin el contenido de la operacion ni su huella).
+                await audit(
+                  tx,
+                  ctx,
+                  'attendance.idempotency_mismatch',
+                  {
+                    dayId,
+                    groupId: day.group_id,
+                    attendanceDate: day.attendance_date,
+                    requestId: body.requestId,
+                    sameActor,
+                  },
+                  'failure',
+                );
                 return fail(
                   'CONFLICT',
                   'Ese identificador de guardado ya se usó con otro contenido',
                   'IDEMPOTENCY_MISMATCH',
                 );
+              }
+              await audit(tx, ctx, 'attendance.marks_replayed', {
+                dayId,
+                groupId: day.group_id,
+                attendanceDate: day.attendance_date,
+                requestId: body.requestId,
+                revision: day.revision,
+              });
               return {
                 ok: true as const,
                 value: {
@@ -776,7 +832,28 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
             const changes = body.marks
               .map((m) => ({ rec: byStudent.get(m.studentId)!, status: m.status }))
               .filter((c) => c.rec.status !== c.status);
-            if (changes.length === 0)
+            if (changes.length === 0) {
+              // Guardado SIN cambios: no hay marcas que cambiar ni `revision` que subir, pero la operacion se acepto y debe poder
+              // reconocerse al reintentarla. Recibo durable con el esquema actual (sin migracion): UN evento `mark_changed` de
+              // CONFIRMACION sobre el primer alumno (orden canonico por id) con `old_status = new_status` y `revision_after` igual a la
+              // revision vigente. No es un cambio de asistencia: el historial lo distingue por old = new.
+              const first = [...body.marks].sort((a, b) =>
+                a.studentId < b.studentId ? -1 : a.studentId > b.studentId ? 1 : 0,
+              )[0]!;
+              const rec = byStudent.get(first.studentId)!;
+              await tx.query(
+                `INSERT INTO attendance_events (attendance_day_id, record_id, event_type, actor_id, request_id, payload_hash,
+                                                old_status, new_status, revision_after)
+                 VALUES ($1, $2, 'mark_changed', $3, $4, $5, $6, $6, $7)`,
+                [dayId, rec.id, ctx.actorId, body.requestId, hash, rec.status, day.revision],
+              );
+              await audit(tx, ctx, 'attendance.marks_unchanged', {
+                dayId,
+                groupId: day.group_id,
+                attendanceDate: day.attendance_date,
+                requestId: body.requestId,
+                revision: day.revision,
+              });
               return {
                 ok: true as const,
                 value: {
@@ -785,6 +862,7 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
                   replayed: false,
                 },
               };
+            }
             await tx.query(
               `UPDATE attendance_records r SET status = v.status, marked_by = $3
                  FROM unnest($1::uuid[], $2::text[]) AS v(id, status)
@@ -815,6 +893,8 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
             await audit(tx, ctx, 'attendance.marks_saved', {
               dayId,
               groupId: day.group_id,
+              attendanceDate: day.attendance_date,
+              requestId: body.requestId,
               changed: changes.length,
               revision,
             });
@@ -952,8 +1032,12 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
           if (access.kind === 'denied' || access.kind === 'own') return 'forbidden' as const;
           const day = await loadDayRow(tx, dayId);
           if (!day || !allowsGroup(access, day.group_id)) return 'missing' as const;
+          // Historial de CAMBIOS: los recibos de idempotencia de un guardado sin cambios (`mark_changed` con old = new, ver `saveMarks`)
+          // NO son cambios de asistencia y no se listan. Un cambio real nunca tiene old = new (solo se escribe si el estado difiere).
           const total = await tx.query<{ n: number }>(
-            `SELECT count(*)::int AS n FROM attendance_events WHERE attendance_day_id = $1`,
+            `SELECT count(*)::int AS n FROM attendance_events
+              WHERE attendance_day_id = $1
+                AND NOT (event_type = 'mark_changed' AND old_status IS NOT DISTINCT FROM new_status)`,
             [dayId],
           );
           const rows = await tx.query<{
@@ -971,6 +1055,7 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
                LEFT JOIN attendance_records r ON r.id = ev.record_id
                LEFT JOIN enrollments e ON e.id = r.enrollment_id
               WHERE ev.attendance_day_id = $1
+                AND NOT (ev.event_type = 'mark_changed' AND ev.old_status IS NOT DISTINCT FROM ev.new_status)
               ORDER BY ev.occurred_at, ev.id
               LIMIT $2 OFFSET $3`,
             [dayId, query.pageSize, (query.page - 1) * query.pageSize],

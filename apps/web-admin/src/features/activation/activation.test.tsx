@@ -11,6 +11,13 @@ import { apiError, installFakeApi, jsonResponse } from '../../test/fake-api';
 import { ActivationPage } from './ActivationPage';
 
 /**
+ * Sin espera entre pulsaciones (`delay: null`): por omision cada tecla cede el hilo con un temporizador, y esta pantalla evalua la
+ * politica de contrasena en cada una. Aislada cada prueba tarda ~1.5 s, pero con la maquina ocupada (p. ej. PostgreSQL desechable en
+ * paralelo) se triplicaba y rozaba el limite de 5 s. Sigue siendo escritura tecla a tecla; solo desaparecen las esperas.
+ */
+const user = userEvent.setup({ delay: null });
+
+/**
  * Pruebas de componentes de la pantalla de activacion (jsdom + `fetch` falso; la criptografia usa Web Crypto de Node).
  * NO son pruebas de navegador real. Comprueban que el secreto nunca se muestra ni se guarda, que al servidor solo llega su
  * hash hasta completar y que cada estado del flujo se presenta con claridad.
@@ -35,8 +42,8 @@ function setup(routes: Parameters<typeof installFakeApi>[0]) {
   return api;
 }
 const startFlow = async (email = 'ana@escuela.mx') => {
-  await userEvent.type(screen.getByLabelText('Correo electrónico de tu cuenta'), email);
-  await userEvent.click(screen.getByRole('button', { name: 'Iniciar activación' }));
+  await user.type(screen.getByLabelText('Correo electrónico de tu cuenta'), email);
+  await user.click(screen.getByRole('button', { name: 'Iniciar activación' }));
 };
 const requestBody = (api: ReturnType<typeof installFakeApi>) =>
   api.calls.find((c) => c.url === '/api/auth/activation/request')!.body as {
@@ -46,14 +53,14 @@ const requestBody = (api: ReturnType<typeof installFakeApi>) =>
 
 /** Una sola entrada de texto (pegado): evita cientos de renders por tecla en campos de contraseña largos. */
 const fill = async (el: HTMLElement, text: string) => {
-  await userEvent.click(el);
-  await userEvent.paste(text);
+  await user.click(el);
+  await user.paste(text);
 };
 
 describe('pantalla de activacion', () => {
   it('paso 1: valida el correo antes de llamar a la API', async () => {
     const api = setup({});
-    await userEvent.click(screen.getByRole('button', { name: 'Iniciar activación' }));
+    await user.click(screen.getByRole('button', { name: 'Iniciar activación' }));
     expect((await screen.findByRole('alert')).textContent).toMatch(
       /correo electrónico con el que la autoridad/,
     );
@@ -96,7 +103,7 @@ describe('pantalla de activacion', () => {
       (await screen.findByRole('status', { name: '' }).catch(() => null)) ?? true,
     ).toBeTruthy();
     expect(await screen.findByText(/No encontramos tu solicitud/)).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Empezar de nuevo' }));
+    await user.click(screen.getByRole('button', { name: 'Empezar de nuevo' }));
     expect(screen.getByRole('button', { name: 'Iniciar activación' })).toBeTruthy();
   });
 
@@ -130,31 +137,31 @@ describe('pantalla de activacion', () => {
       const confirm = screen.getByLabelText('Confirma tu contraseña');
       await fill(pass, 'corta');
       expect(screen.getByText(/Usa al menos 12 caracteres/)).toBeTruthy();
-      await userEvent.clear(pass);
+      await user.clear(pass);
       await fill(pass, 'Password123456');
       expect(screen.getByText(/demasiado común/)).toBeTruthy();
-      await userEvent.clear(pass);
+      await user.clear(pass);
       await fill(pass, 'analuisa-escuela-2026');
       expect(screen.getByText(/No uses tu correo ni tu nombre/)).toBeTruthy();
-      await userEvent.clear(pass);
+      await user.clear(pass);
       await fill(pass, GOOD);
       expect(screen.queryByRole('list', { name: 'Requisitos de la contraseña' })).toBeNull();
       await fill(confirm, 'otra cosa');
       expect(screen.getByText('Las contraseñas no coinciden.')).toBeTruthy();
       expect(submit.disabled).toBe(true);
-      await userEvent.clear(confirm);
+      await user.clear(confirm);
       await fill(confirm, GOOD);
       expect(submit.disabled).toBe(false);
-      await userEvent.click(screen.getByLabelText('Mostrar la contraseña'));
+      await user.click(screen.getByLabelText('Mostrar la contraseña'));
       expect((pass as HTMLInputElement).type).toBe('text');
     });
 
     it('completa: el servidor recibe el secreto (cuyo SHA-256 es el hash enviado antes) y la contraseña; no abre sesion y lleva a login', async () => {
       const api = authorized();
       await startFlow();
-      await userEvent.type(await screen.findByLabelText('Contraseña nueva'), GOOD);
-      await userEvent.type(screen.getByLabelText('Confirma tu contraseña'), GOOD);
-      await userEvent.click(screen.getByRole('button', { name: 'Activar mi cuenta' }));
+      await user.type(await screen.findByLabelText('Contraseña nueva'), GOOD);
+      await user.type(screen.getByLabelText('Confirma tu contraseña'), GOOD);
+      await user.click(screen.getByRole('button', { name: 'Activar mi cuenta' }));
       expect(await screen.findByText('¡Tu cuenta está activa!')).toBeTruthy();
       const complete = api.calls.find((c) => c.url === '/api/auth/activation/complete')!;
       const { secret, newPassword } = complete.body as { secret: string; newPassword: string };
@@ -181,12 +188,12 @@ describe('pantalla de activacion', () => {
         },
       });
       await startFlow();
-      await userEvent.type(await screen.findByLabelText('Contraseña nueva'), GOOD);
-      await userEvent.type(screen.getByLabelText('Confirma tu contraseña'), GOOD);
-      await userEvent.click(screen.getByRole('button', { name: 'Activar mi cuenta' }));
+      await user.type(await screen.findByLabelText('Contraseña nueva'), GOOD);
+      await user.type(screen.getByLabelText('Confirma tu contraseña'), GOOD);
+      await user.click(screen.getByRole('button', { name: 'Activar mi cuenta' }));
       expect(await screen.findByText(/demasiado común o fácil de adivinar/)).toBeTruthy();
       expect(document.body.textContent).not.toContain('"common"');
-      await userEvent.click(screen.getByRole('button', { name: 'Activar mi cuenta' }));
+      await user.click(screen.getByRole('button', { name: 'Activar mi cuenta' }));
       expect(await screen.findByText('¡Tu cuenta está activa!')).toBeTruthy();
     });
 
@@ -195,9 +202,9 @@ describe('pantalla de activacion', () => {
         'POST /auth/activation/complete': () => apiError(400, 'ACTIVATION_INVALID', 'x'),
       });
       await startFlow();
-      await userEvent.type(await screen.findByLabelText('Contraseña nueva'), GOOD);
-      await userEvent.type(screen.getByLabelText('Confirma tu contraseña'), GOOD);
-      await userEvent.click(screen.getByRole('button', { name: 'Activar mi cuenta' }));
+      await user.type(await screen.findByLabelText('Contraseña nueva'), GOOD);
+      await user.type(screen.getByLabelText('Confirma tu contraseña'), GOOD);
+      await user.click(screen.getByRole('button', { name: 'Activar mi cuenta' }));
       expect(await screen.findByText(/venció o ya no es válida/)).toBeTruthy();
       expect(screen.getByRole('button', { name: 'Iniciar activación' })).toBeTruthy();
       expect(
@@ -208,9 +215,9 @@ describe('pantalla de activacion', () => {
     it('limite de intentos y fallo de red al completar se informan', async () => {
       authorized({ 'POST /auth/activation/complete': () => apiError(429, 'RATE_LIMITED', 'x') });
       await startFlow();
-      await userEvent.type(await screen.findByLabelText('Contraseña nueva'), GOOD);
-      await userEvent.type(screen.getByLabelText('Confirma tu contraseña'), GOOD);
-      await userEvent.click(screen.getByRole('button', { name: 'Activar mi cuenta' }));
+      await user.type(await screen.findByLabelText('Contraseña nueva'), GOOD);
+      await user.type(screen.getByLabelText('Confirma tu contraseña'), GOOD);
+      await user.click(screen.getByRole('button', { name: 'Activar mi cuenta' }));
       expect((await screen.findByRole('alert')).textContent).toMatch(/Demasiados intentos/);
     });
   });
@@ -234,7 +241,7 @@ describe('integracion con el login', () => {
         </AuthProvider>
       </MemoryRouter>,
     );
-    await userEvent.click(await screen.findByRole('link', { name: 'actívala aquí' }));
+    await user.click(await screen.findByRole('link', { name: 'actívala aquí' }));
     expect(await screen.findByRole('heading', { name: 'Activa tu cuenta' })).toBeTruthy();
   });
 
@@ -253,15 +260,15 @@ describe('integracion con el login', () => {
         </AuthProvider>
       </MemoryRouter>,
     );
-    await userEvent.type(
+    await user.type(
       await screen.findByLabelText('Correo electrónico de tu cuenta'),
       'ana@escuela.mx',
     );
-    await userEvent.click(screen.getByRole('button', { name: 'Iniciar activación' }));
-    await userEvent.type(await screen.findByLabelText('Contraseña nueva'), GOOD);
-    await userEvent.type(screen.getByLabelText('Confirma tu contraseña'), GOOD);
-    await userEvent.click(screen.getByRole('button', { name: 'Activar mi cuenta' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Ir a iniciar sesión' }));
+    await user.click(screen.getByRole('button', { name: 'Iniciar activación' }));
+    await user.type(await screen.findByLabelText('Contraseña nueva'), GOOD);
+    await user.type(screen.getByLabelText('Confirma tu contraseña'), GOOD);
+    await user.click(screen.getByRole('button', { name: 'Activar mi cuenta' }));
+    await user.click(await screen.findByRole('button', { name: 'Ir a iniciar sesión' }));
     expect(await screen.findByRole('heading', { name: 'Iniciar sesión' })).toBeTruthy();
   });
 });

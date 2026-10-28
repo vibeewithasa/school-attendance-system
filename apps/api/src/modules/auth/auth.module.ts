@@ -77,6 +77,12 @@ export interface MobileAuthModuleOptions {
    * Apagado por omision. Solo sandbox: hereda la prohibicion de NODE_ENV=production de `mobile` y la repite aqui.
    */
   attendanceRead?: boolean;
+  /**
+   * ESCRITURA de asistencia por el canal movil (ADR 0006, fase 2): solo POST /mobile/school/attendance/days (abrir) y
+   * .../days/:id/marks (guardar). Apagado por omision. Exige `attendanceRead` y `mobile` (error al construir si falta); hereda la
+   * prohibicion de NODE_ENV=production. No existen finalizar, borrar ni capturas historicas.
+   */
+  attendanceWrite?: boolean;
 }
 
 export interface MobileLimits {
@@ -328,12 +334,18 @@ async function registerMobile(
   const { store, guards, limits, limiter } = deps;
   if (mobile.attendanceRead && env.NODE_ENV === 'production')
     throw new Error('La lectura movil de asistencia no se habilita con NODE_ENV=production');
+  if (mobile.attendanceWrite && env.NODE_ENV === 'production')
+    throw new Error('La escritura movil de asistencia no se habilita con NODE_ENV=production');
+  // La escritura NUNCA se enciende sola: exige expresamente la lectura (falla cerrado al construir la aplicacion).
+  if (mobile.attendanceWrite && !mobile.attendanceRead)
+    throw new Error('mobile.attendanceWrite exige mobile.attendanceRead');
   const config: MobileAuthConfig = {
     ...SANDBOX_MOBILE_DEFAULTS,
     ...mobile.config,
     publicBaseUrl: mobile.publicBaseUrl.replace(/\/+$/, ''),
     // Una sola fuente: el interruptor explicito. `mobile.config` no puede encenderlo por la puerta de atras.
     attendanceRead: mobile.attendanceRead === true,
+    attendanceWrite: mobile.attendanceWrite === true,
   };
   const mLimits = { ...DEFAULT_MOBILE_LIMITS, ...mobile.limits };
   // Los limites de solicitudes por IP y de reclamos fallidos por cuenta son COMPARTIDOS: los aplica el servicio con PostgreSQL.
@@ -401,7 +413,12 @@ async function registerMobile(
           async (attendanceScope) =>
             mobileAttendanceRoutes(
               attendanceScope,
-              { service: deps.attendance, config: route.config, preHandler: route.preHandler },
+              {
+                service: deps.attendance,
+                write: config.attendanceWrite === true,
+                config: route.config,
+                preHandler: route.preHandler,
+              },
               coarseIp,
             ),
           { prefix: '/attendance' },

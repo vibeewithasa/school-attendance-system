@@ -60,6 +60,11 @@ export interface MobileAuthConfig {
    * `registerMobile`, que ya no existe con NODE_ENV=production.
    */
   attendanceRead?: boolean;
+  /**
+   * ESCRITURA de asistencia por el canal movil (ADR 0006, fase 2; solo sandbox). Apagado por omision y NUNCA se enciende por tener la
+   * lectura: exige `attendanceRead`. Con `true` el token incluye ademas `attendance:capture` SOLO con alcance `assigned_groups`.
+   */
+  attendanceWrite?: boolean;
 }
 
 /** Valores de ENSAYO del sandbox (no son politica institucional; ver ADR 0005). */
@@ -89,6 +94,9 @@ export const MOBILE_ALLOWED_PERMISSIONS: ReadonlySet<string> = new Set([
 
 /** Permiso de lectura de asistencia que el token movil puede ejercer cuando `MobileAuthConfig.attendanceRead` esta activo. */
 export const MOBILE_ATTENDANCE_READ_PERMISSION = 'attendance:read';
+
+/** Permiso de captura que el token movil puede ejercer cuando `MobileAuthConfig.attendanceWrite` esta activo. */
+export const MOBILE_ATTENDANCE_CAPTURE_PERMISSION = 'attendance:capture';
 
 export type MobileFailure =
   | 'FORBIDDEN'
@@ -1299,6 +1307,10 @@ export function createMobileAuthService(options: MobileAuthServiceOptions) {
                 MOBILE_ALLOWED_PERMISSIONS.has(g.permission) ||
                 (config.attendanceRead === true &&
                   g.permission === MOBILE_ATTENDANCE_READ_PERMISSION &&
+                  g.scope === 'assigned_groups') ||
+                (config.attendanceRead === true &&
+                  config.attendanceWrite === true &&
+                  g.permission === MOBILE_ATTENDANCE_CAPTURE_PERMISSION &&
                   g.scope === 'assigned_groups'),
             ),
             createdAt: s.created_at,
