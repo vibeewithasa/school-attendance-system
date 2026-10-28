@@ -147,7 +147,7 @@ Permisos reales (no se crearon nuevos): `attendance:capture` (solo `assigned_gro
 - **Brecha cerrada**: la semilla `0004` concedía `attendance:read` con alcance `all` a `trabajo_social`. La migración **0010** retira esa asignación (`-- eta15:allow-destructive`, **un único `DELETE`**, 1 evento de auditoría; 36 asignaciones de permisos al aplicarla). `justifications:read` y `justifications:manage` **no se tocaron**.
 - El alcance se resuelve **en cada petición** con las asignaciones **de hoy** (`pgGroupAssignments`); haber tenido el grupo en el pasado no da acceso. En toda escritura se vuelve a comprobar **con bloqueo**.
 - Fuera de alcance ≡ inexistente: **404 indistinguible** (listado, detalle, historial, guardado, finalización y apertura). Sin permiso: 403 + `authz.denied`.
-- **Consultas por alumno** y **reportes**: no hay endpoints. Cuando existan deberán aplicar `attendance:read` con el alcance por grupo **en la consulta** y la misma proyección mínima; quedan como trabajo futuro.
+- **Consultas por alumno** y **reportes**: la Fase 1 (reportes básicos de solo lectura por grupo y por alumno, sin justificantes ni porcentajes) está en [reportes-asistencia.md](reportes-asistencia.md). Las demás (acumulados, alertas, exportaciones) siguen como trabajo futuro y deberán aplicar `attendance:read` con el alcance por grupo **en la consulta** y la misma proyección mínima; quedan como trabajo futuro.
 - Ningún endpoint admite `userId`, `actorId`, hora ni estado inicial del cliente; el actor sale de la sesión. `role_permissions` no se escribe desde la API (privilegio solo `SELECT`).
 
 ## 10. API (`/school/attendance`, prefijo coherente con `/school/*`)

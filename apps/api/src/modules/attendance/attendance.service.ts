@@ -25,6 +25,12 @@ import {
   type AttendanceDayDto,
   type AttendanceDayList,
   type AttendanceEventList,
+  type AttendanceGroupReport,
+  type AttendanceGroupReportQuery,
+  type AttendanceReportOptions,
+  type AttendanceReportStudentOptions,
+  type AttendanceStudentReport,
+  type AttendanceStudentReportQuery,
   type AttendanceMark,
   type AttendanceRecordStatus,
   type AttendanceTodayResponse,
@@ -47,6 +53,7 @@ import {
 } from '../access-control/authorize.js';
 import { recordAudit } from '../audit/audit-log.js';
 import type { SessionStore, SqlClient } from '../auth/session-service.js';
+import * as reports from './attendance.reports.js';
 
 export type AttendanceFailure =
   'FORBIDDEN' | 'NOT_FOUND' | 'CONFLICT' | 'VALIDATION' | 'UNAVAILABLE';
@@ -404,6 +411,30 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
         removedFromRoster: diff.rows[0]?.removed ?? 0,
       },
     };
+  }
+
+  /** Lectura de un reporte: una sola foto, permiso `attendance:read` con alcance, sin escrituras. */
+  function readReport<T>(
+    ctx: AttendanceContext,
+    action: string,
+    run: (tx: SqlClient, access: Access, today: string) => Promise<reports.ReportOutcome<T>>,
+  ): Promise<AttendanceResult<T>> {
+    return guard(async () => {
+      const out = await store.transaction(async (tx) => {
+        await beginSnapshot(tx);
+        const today = await todayOf(tx);
+        const access = await accessFor(tx, ctx, 'attendance:read', today);
+        if (access.kind === 'denied' || access.kind === 'own') return 'forbidden' as const;
+        return run(tx, access, today);
+      });
+      if (out === 'forbidden') {
+        await denied(ctx, action);
+        return fail('FORBIDDEN', 'No tiene permiso para consultar la asistencia');
+      }
+      if (out.kind === 'missing') return fail('NOT_FOUND', 'No se encontró el recurso solicitado');
+      if (out.kind === 'invalid') return fail('VALIDATION', out.message, out.reason);
+      return { ok: true as const, value: out.value };
+    });
   }
 
   /** Comprobaciones comunes de las operaciones de ESCRITURA sobre una lista existente. Devuelve la fila bloqueada o un fallo. */
@@ -1086,6 +1117,44 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
         if (out === 'missing') return notFound();
         return { ok: true as const, value: out };
       });
+    },
+
+    /**
+     * Reportes basicos (SOLO LECTURA, ver attendance.reports.ts). Mismo permiso (`attendance:read`), mismo alcance y misma foto
+     * REPEATABLE READ que las demas lecturas; no escriben nada (ni auditoria de lectura). Fuera de alcance == inexistente (404).
+     */
+    reportOptions(ctx: AttendanceContext): Promise<AttendanceResult<AttendanceReportOptions>> {
+      return readReport(ctx, 'attendance.report_options', (tx, access, today) =>
+        reports.reportOptions(tx, access, today).then(reports.ok),
+      );
+    },
+
+    reportGroupStudents(
+      ctx: AttendanceContext,
+      groupId: string,
+    ): Promise<AttendanceResult<AttendanceReportStudentOptions>> {
+      return readReport(ctx, 'attendance.report_group_students', (tx, access) =>
+        reports.reportGroupStudents(tx, access, groupId),
+      );
+    },
+
+    reportGroup(
+      ctx: AttendanceContext,
+      query: AttendanceGroupReportQuery,
+    ): Promise<AttendanceResult<AttendanceGroupReport>> {
+      return readReport(ctx, 'attendance.report_group', (tx, access, today) =>
+        reports.groupReport(tx, access, today, query, new Date()),
+      );
+    },
+
+    reportStudent(
+      ctx: AttendanceContext,
+      studentId: string,
+      query: AttendanceStudentReportQuery,
+    ): Promise<AttendanceResult<AttendanceStudentReport>> {
+      return readReport(ctx, 'attendance.report_student', (tx, access, today) =>
+        reports.studentReport(tx, access, today, studentId, query, new Date()),
+      );
     },
   };
 }

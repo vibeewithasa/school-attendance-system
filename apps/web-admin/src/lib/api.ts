@@ -5,6 +5,12 @@ import type {
   MobileRequestDto,
   RevokeMobileDeviceBody,
   AttendanceDayDetail,
+  AttendanceGroupReport,
+  AttendanceGroupReportQuery,
+  AttendanceReportOptions,
+  AttendanceReportStudentOptions,
+  AttendanceStudentReport,
+  AttendanceStudentReportQuery,
   AttendanceDayList,
   AttendanceEventList,
   AttendanceTodayResponse,
@@ -257,6 +263,17 @@ export const api = {
     mutate<SaveAttendanceMarksResponse>(`/school/attendance/days/${id}/marks`, 'POST', body),
   finalizeAttendanceDay: (id: string, body: FinalizeAttendanceDayBody) =>
     mutate<FinalizeAttendanceDayResponse>(`/school/attendance/days/${id}/finalize`, 'POST', body),
+  // --- Reportes basicos de asistencia (SOLO LECTURA; el servidor autoriza y aplica el alcance por grupo). ---
+  attendanceReportOptions: () =>
+    request<AttendanceReportOptions>('/school/attendance/reports/options'),
+  attendanceReportGroupStudents: (groupId: string) =>
+    request<AttendanceReportStudentOptions>(`/school/attendance/reports/group/${groupId}/students`),
+  attendanceGroupReport: (q: AttendanceGroupReportQuery) =>
+    request<AttendanceGroupReport>(`/school/attendance/reports/group${query({ ...q })}`),
+  attendanceStudentReport: (studentId: string, q: AttendanceStudentReportQuery) =>
+    request<AttendanceStudentReport>(
+      `/school/attendance/reports/student/${studentId}${query({ ...q })}`,
+    ),
   listAttendanceEvents: (id: string, q: { page?: number; pageSize?: number } = {}) =>
     request<AttendanceEventList>(`/school/attendance/days/${id}/events${query({ ...q })}`),
 
