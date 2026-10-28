@@ -740,15 +740,32 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
               [dayId, body.requestId],
             );
             if (prior.rows[0]) {
-              if (prior.rows[0].payload_hash !== hash || prior.rows[0].actor_id !== ctx.actorId)
+              const sameActor = prior.rows[0].actor_id === ctx.actorId;
+              if (prior.rows[0].payload_hash !== hash || !sameActor) {
+                // Uso incorrecto o intento ajeno: queda auditado (sin el contenido de la operacion ni su huella).
+                await audit(
+                  tx,
+                  ctx,
+                  'attendance.idempotency_mismatch',
+                  {
+                    dayId,
+                    groupId: day.group_id,
+                    attendanceDate: day.attendance_date,
+                    requestId: body.requestId,
+                    sameActor,
+                  },
+                  'failure',
+                );
                 return fail(
                   'CONFLICT',
                   'Ese identificador de guardado ya se usó con otro contenido',
                   'IDEMPOTENCY_MISMATCH',
                 );
+              }
               await audit(tx, ctx, 'attendance.marks_replayed', {
                 dayId,
                 groupId: day.group_id,
+                attendanceDate: day.attendance_date,
                 requestId: body.requestId,
                 revision: day.revision,
               });
@@ -833,6 +850,7 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
               await audit(tx, ctx, 'attendance.marks_unchanged', {
                 dayId,
                 groupId: day.group_id,
+                attendanceDate: day.attendance_date,
                 requestId: body.requestId,
                 revision: day.revision,
               });
@@ -875,6 +893,7 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
             await audit(tx, ctx, 'attendance.marks_saved', {
               dayId,
               groupId: day.group_id,
+              attendanceDate: day.attendance_date,
               requestId: body.requestId,
               changed: changes.length,
               revision,
@@ -1013,8 +1032,12 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
           if (access.kind === 'denied' || access.kind === 'own') return 'forbidden' as const;
           const day = await loadDayRow(tx, dayId);
           if (!day || !allowsGroup(access, day.group_id)) return 'missing' as const;
+          // Historial de CAMBIOS: los recibos de idempotencia de un guardado sin cambios (`mark_changed` con old = new, ver `saveMarks`)
+          // NO son cambios de asistencia y no se listan. Un cambio real nunca tiene old = new (solo se escribe si el estado difiere).
           const total = await tx.query<{ n: number }>(
-            `SELECT count(*)::int AS n FROM attendance_events WHERE attendance_day_id = $1`,
+            `SELECT count(*)::int AS n FROM attendance_events
+              WHERE attendance_day_id = $1
+                AND NOT (event_type = 'mark_changed' AND old_status IS NOT DISTINCT FROM new_status)`,
             [dayId],
           );
           const rows = await tx.query<{
@@ -1032,6 +1055,7 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
                LEFT JOIN attendance_records r ON r.id = ev.record_id
                LEFT JOIN enrollments e ON e.id = r.enrollment_id
               WHERE ev.attendance_day_id = $1
+                AND NOT (ev.event_type = 'mark_changed' AND ev.old_status IS NOT DISTINCT FROM ev.new_status)
               ORDER BY ev.occurred_at, ev.id
               LIMIT $2 OFFSET $3`,
             [dayId, query.pageSize, (query.page - 1) * query.pageSize],

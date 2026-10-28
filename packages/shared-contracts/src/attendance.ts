@@ -41,7 +41,15 @@ export const saveAttendanceMarksBody = z
     expectedRevision: z.number().int().min(1).max(1_000_000),
     requestId: z.uuid(),
     marks: z
-      .array(z.object({ studentId: z.uuid(), status: z.enum(ATTENDANCE_MARKS) }).strict())
+      // El identificador se normaliza a minusculas: la identidad logica de la operacion (y su huella) no depende de la grafia.
+      .array(
+        z
+          .object({
+            studentId: z.uuid().transform((id) => id.toLowerCase()),
+            status: z.enum(ATTENDANCE_MARKS),
+          })
+          .strict(),
+      )
       .min(1)
       .max(ATTENDANCE_MAX_MARKS_PER_REQUEST),
   })

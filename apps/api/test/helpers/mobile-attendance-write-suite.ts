@@ -90,16 +90,21 @@ export function defineMobileAttendanceWriteTests(
       expect(r.statusCode, r.body).toBe(200);
       return json(r).nonce as string;
     };
-    async function session(app: FastifyInstance, who: string): Promise<Session> {
+    async function session(
+      app: FastifyInstance,
+      who: string,
+      keepOthers = false,
+    ): Promise<Session> {
       const titular = acc[who]!;
       await q(
         `update mobile_device_requests set status = 'cancelled' where user_id = $1 and status in ('claimed', 'approved')`,
         [titular.account.id],
       );
-      await q(
-        `update mobile_devices set status = 'revoked', revoked_by = $2, revoke_reason = 'authority' where user_id = $1 and status = 'active'`,
-        [titular.account.id, kit.boss.id],
-      );
+      if (!keepOthers)
+        await q(
+          `update mobile_devices set status = 'revoked', revoked_by = $2, revoke_reason = 'authority' where user_id = $1 and status = 'active'`,
+          [titular.account.id, kit.boss.id],
+        );
       const dev = new FakeDevice();
       const r = await app.inject({
         method: 'POST',
@@ -967,6 +972,7 @@ export function defineMobileAttendanceWriteTests(
         expect(saved.outcome).toBe('success');
         expect(saved.details).toMatchObject({
           groupId: f.g,
+          attendanceDate: W,
           requestId: rid,
           changed: 1,
           revision: 2,
@@ -997,35 +1003,389 @@ export function defineMobileAttendanceWriteTests(
     });
 
     // ================================================================================================== concurrencia
-    if (!opts.realConcurrency) return;
-    describe('concurrencia REAL con varias conexiones PostgreSQL', () => {
-      const statuses = (rs: Res[]) => rs.map((r) => r.statusCode).sort((a, b) => a - b);
-      /** App con un almacen que ejecuta `hook` ANTES de cada sentencia (fallos inyectados con conexiones reales). */
-      const hookedApp = async (
-        hook: (sql: string, run: (sql: string) => Promise<unknown>) => Promise<void>,
-      ) => {
-        const store: SessionStore = {
-          transaction: (fn) =>
-            kit.harness.store.transaction((tx) =>
-              fn({
-                query: async (sql, params) => {
-                  await hook(sql, (x) => tx.query(x));
-                  return tx.query(sql, params);
-                },
-              }),
-            ),
-        };
-        const app = await kit.build(
-          {},
+    const statuses = (rs: Res[]) => rs.map((r) => r.statusCode).sort((a, b) => a - b);
+    /** App con un almacen que ejecuta `hook` ANTES de cada sentencia (fallos inyectados con conexiones reales). */
+    const hookedApp = async (
+      hook: (sql: string, run: (sql: string) => Promise<unknown>) => Promise<void>,
+    ) => {
+      const store: SessionStore = {
+        transaction: (fn) =>
+          kit.harness.store.transaction(async (tx) => {
+            await hook('--BEGIN--', (x) => tx.query(x)); // marca el inicio de la transaccion (no es SQL)
+            return fn({
+              query: async (sql, params) => {
+                await hook(sql, (x) => tx.query(x));
+                return tx.query(sql, params);
+              },
+            });
+          }),
+      };
+      const app = await kit.build(
+        {},
+        {
+          schoolToday: () => clock.today,
+          store,
+          mobile: mobileCfg({ attendanceRead: true, attendanceWrite: true }),
+        },
+      );
+      await app.ready();
+      return app;
+    };
+
+    // ============================================================================ AUDITORIA DE SEGURIDAD (Prompt 42)
+    describe('auditoria de seguridad: recibos, identidad de la operacion, permisos, transacciones y errores', () => {
+      const webEvents = async (who: string, dayId: string, query = 'pageSize=100') => {
+        const r = await kit.call(
+          acc[who]!,
+          'GET',
+          `/school/attendance/days/${dayId}/events?${query}`,
           {
-            schoolToday: () => clock.today,
-            store,
-            mobile: mobileCfg({ attendanceRead: true, attendanceWrite: true }),
+            target: rw,
           },
         );
-        await app.ready();
-        return app;
+        expect(r.statusCode, r.body).toBe(200);
+        return json(r);
       };
+
+      it('el recibo de un guardado sin cambios NO es un cambio de asistencia: ni contadores, ni revision, ni resumenes, ni el historial de cambios lo reflejan', async () => {
+        const f = await fixture('P3', 4);
+        const ok = await save(rw, f.s, f.dayId, 1, marks([f.ids[0]!, f.ids[1]!]));
+        expect(ok.statusCode).toBe(200);
+        const before = await detail(rw, f.s, f.dayId);
+        const todayBefore = json(await call(rw, f.s, 'GET', '/mobile/school/attendance/today'));
+        const marksBefore = await q(
+          `select id, status, marked_by, marked_at from attendance_records where attendance_day_id = $1 order by id`,
+          [f.dayId],
+        );
+        const rid = uuid();
+        for (let i = 0; i < 3; i += 1) {
+          const r = await save(rw, f.s, f.dayId, 2, marks([f.ids[0]!, f.ids[1]!]), rid); // 1 recibo + 2 reintentos
+          expect(r.statusCode).toBe(200);
+        }
+        const after = await detail(rw, f.s, f.dayId);
+        expect(after.day).toEqual(before.day); // revision, estado y conteos intactos
+        expect(after.records).toEqual(before.records); // marcas y fechas de marca intactas
+        expect(json(await call(rw, f.s, 'GET', '/mobile/school/attendance/today')).groups).toEqual(
+          todayBefore.groups,
+        );
+        expect(
+          await q(
+            `select id, status, marked_by, marked_at from attendance_records where attendance_day_id = $1 order by id`,
+            [f.dayId],
+          ),
+        ).toEqual(marksBefore);
+        // el recibo existe (un solo evento, old = new), pero el historial de CAMBIOS no lo muestra
+        expect(
+          await count(
+            `select count(*) n from attendance_events where attendance_day_id = $1 and request_id = $2 and old_status is not distinct from new_status`,
+            [f.dayId, rid],
+          ),
+        ).toBe(1);
+        const ev = await webEvents(f.key, f.dayId);
+        const changes = ev.items.filter((e: Json) => e.eventType === 'mark_changed');
+        expect(changes).toHaveLength(2);
+        expect(changes.every((e: Json) => e.oldStatus !== e.newStatus)).toBe(true);
+        expect(ev.total).toBe(ev.items.length); // el total coincide con lo listado: 1 apertura + 2 cambios
+        expect(ev.total).toBe(3);
+        // paginado: ninguna pagina muestra recibos y el total es coherente
+        const seen: Json[] = [];
+        for (let page = 1; page <= 3; page += 1)
+          seen.push(...(await webEvents(f.key, f.dayId, `pageSize=1&page=${page}`)).items);
+        expect(seen.map((e) => e.id)).toEqual(ev.items.map((e: Json) => e.id));
+        // invariante: un cambio REAL nunca tiene old = new (por eso el recibo es inconfundible)
+        const realWithEqualStatus = await count(
+          `select count(*) n from attendance_events e where e.event_type = 'mark_changed' and e.old_status is not distinct from e.new_status
+              and exists (select 1 from attendance_events x where x.attendance_day_id = e.attendance_day_id and x.request_id = e.request_id and x.id <> e.id)`,
+        );
+        expect(realWithEqualStatus).toBe(0); // un recibo es el UNICO evento de su requestId
+      });
+
+      it('identidad logica de la operacion: el orden y las MAYUSCULAS de los identificadores no la eluden (misma huella, mismo recibo)', async () => {
+        const f = await fixture('P3', 4);
+        const rid = uuid();
+        const lower = marks([f.ids[0]!, f.ids[1]!]);
+        const upper = lower.map((m) => ({ ...m, studentId: m.studentId.toUpperCase() }));
+        const first = await save(rw, f.s, f.dayId, 1, upper, rid); // mayusculas
+        expect([first.statusCode, json(first).changed]).toEqual([200, 2]);
+        const again = await save(rw, f.s, f.dayId, 1, [...lower].reverse(), rid); // minusculas y otro orden
+        expect([again.statusCode, json(again).replayed, json(again).changed]).toEqual([
+          200,
+          true,
+          0,
+        ]);
+        expect(await changedEvents(f.dayId)).toBe(2);
+        // el mismo alumno en dos grafias distintas NO es dos alumnos: duplicado
+        const dup = await save(rw, f.s, f.dayId, 2, [
+          { studentId: f.ids[2]!, status: 'present' },
+          { studentId: f.ids[2]!.toUpperCase(), status: 'absent' },
+        ]);
+        expect(dup.statusCode).toBe(400);
+        expect(
+          (await detail(rw, f.s, f.dayId)).records.find((r: Json) => r.studentId === f.ids[2])!
+            .status,
+        ).toBe('pending');
+      });
+
+      it('el reintento desde OTRO dispositivo legitimo de la misma cuenta se reconoce; desde otra cuenta o con otro contenido se rechaza y queda AUDITADO sin contenido', async () => {
+        const f = await fixture('P3', 4);
+        const rid = uuid();
+        const ok = await save(rw, f.s, f.dayId, 1, marks([f.ids[0]!]), rid);
+        expect(ok.statusCode).toBe(200);
+        const second = await session(rw, f.key, true); // segundo dispositivo de la MISMA persona (sin revocar el primero)
+        expect(second.deviceId).not.toBe(f.s.deviceId);
+        const viaOther = await save(rw, second, f.dayId, 1, marks([f.ids[0]!]), rid);
+        expect([viaOther.statusCode, json(viaOther).replayed]).toEqual([200, true]);
+        expect(
+          await count(
+            `select count(*) n from audit_events where event_type = 'attendance.marks_replayed' and details->>'dayId' = $1 and details->>'deviceId' = $2`,
+            [f.dayId, second.deviceId],
+          ),
+        ).toBe(1);
+        // mismo requestId, otro contenido (misma cuenta): rechazado y auditado
+        const diff = await save(rw, f.s, f.dayId, 2, marks([f.ids[1]!]), rid);
+        expect([diff.statusCode, json(diff).error.code]).toEqual([409, 'IDEMPOTENCY_MISMATCH']);
+        // otra cuenta con acceso al mismo grupo (cobertura): se le da de alta una asignacion al mismo grupo
+        const other = await kit.seed({ role: 'prefectura' });
+        acc.OTH = await kit.login(other, rw);
+        await assign(other.id, f.g);
+        const so = await session(rw, 'OTH');
+        const stolen = await save(rw, so, f.dayId, 2, marks([f.ids[0]!]), rid);
+        expect([stolen.statusCode, json(stolen).error.code]).toEqual([409, 'IDEMPOTENCY_MISMATCH']);
+        expect(stolen.body).not.toContain('replayed');
+        const rows = await q(
+          `select actor_user_id, outcome, details from audit_events where event_type = 'attendance.idempotency_mismatch' and details->>'dayId' = $1 order by occurred_at`,
+          [f.dayId],
+        );
+        expect(rows).toHaveLength(2);
+        expect(rows.every((r) => r.outcome === 'failure')).toBe(true);
+        expect(rows.map((r) => (r.details as Json).sameActor)).toEqual([true, false]);
+        expect(rows.map((r) => r.actor_user_id)).toEqual([f.account.id, other.id]);
+        expect(JSON.stringify(rows)).not.toMatch(/payload|hash|studentId|marks/i); // sin contenido de la operacion
+        expect(await changedEvents(f.dayId)).toBe(1);
+      });
+
+      it('combinaciones de interruptores y credenciales: movil apagado, token tras renovar y permisos cambiados despues de emitir el token, sin cookies', async () => {
+        // movil totalmente apagado: ni /mobile ni las rutas de asistencia existen
+        const none = await kit.build({}, { schoolToday: () => clock.today });
+        await none.ready();
+        const days = await count(`select count(*) n from attendance_days`);
+        for (const [m, url] of [
+          ['POST', '/mobile/school/attendance/days'],
+          ['POST', `/mobile/school/attendance/days/${uuid()}/marks`],
+          ['GET', '/mobile/school/attendance/today'],
+          ['GET', '/mobile/me'],
+        ] as const) {
+          const r = await none.inject({ method: m, url, payload: m === 'POST' ? {} : undefined });
+          expect([
+            m,
+            url.replace(/[0-9a-f-]{36}/, ':id'),
+            [403, 404].includes(r.statusCode),
+          ]).toEqual([m, url.replace(/[0-9a-f-]{36}/, ':id'), true]);
+        }
+        await none.close();
+        expect(await count(`select count(*) n from attendance_days`)).toBe(days);
+
+        const f = await fixture('P3', 3);
+        // una cookie web (con CSRF y Origin validos) no escribe por el canal movil
+        const withCookie = await rw.inject({
+          method: 'POST',
+          url: `/mobile/school/attendance/days/${f.dayId}/marks`,
+          headers: { cookie: acc[f.key]!.cookie, 'x-csrf-token': acc[f.key]!.csrf },
+          payload: { expectedRevision: 1, requestId: uuid(), marks: marks([f.ids[0]!]) },
+        });
+        expect(withCookie.statusCode).toBe(401);
+        // renovar la sesion invalida el token de acceso anterior tambien para escribir
+        const oldTokens = f.s.tokens;
+        const nonce = await challenge(rw, f.s.dev);
+        const refreshed = await rw.inject({
+          method: 'POST',
+          url: '/mobile/auth/refresh',
+          payload: { refreshToken: oldTokens.refreshToken },
+          headers: {
+            dpop: f.s.dev.proof({ method: 'POST', url: `${BASE}/mobile/auth/refresh`, nonce }),
+          },
+        });
+        expect(refreshed.statusCode, refreshed.body).toBe(200);
+        const fresh = json(refreshed) as Tokens;
+        allTokens.push(fresh.accessToken, fresh.refreshToken);
+        const stale = await save(rw, f.s, f.dayId, 1, marks([f.ids[0]!]));
+        expect(stale.statusCode).toBe(401);
+        const s2: Session = { ...f.s, tokens: fresh };
+        expect((await save(rw, s2, f.dayId, 1, marks([f.ids[0]!]))).statusCode).toBe(200);
+        // el permiso cambia DESPUES de emitir el token: la siguiente escritura lo refleja (los permisos salen de la base)
+        const roleId = `(select id from roles where key = 'prefectura')`;
+        const permId = `(select id from permissions where key = 'attendance:capture')`;
+        await q(
+          `delete from role_permissions where role_id = ${roleId} and permission_id = ${permId}`,
+        );
+        try {
+          const denied = await save(rw, s2, f.dayId, 2, marks([f.ids[1]!]));
+          expect(denied.statusCode).toBe(403);
+          expect(
+            await count(
+              `select count(*) n from attendance_records where attendance_day_id = $1 and status is not null`,
+              [f.dayId],
+            ),
+          ).toBe(1);
+        } finally {
+          await q(
+            `insert into role_permissions (role_id, role_domain, permission_id, permission_domain, scope)
+             select r.id, r.domain, p.id, p.domain, 'assigned_groups' from roles r, permissions p
+              where r.key = 'prefectura' and p.key = 'attendance:capture'`,
+          );
+        }
+        expect((await save(rw, s2, f.dayId, 2, marks([f.ids[1]!]))).statusCode).toBe(200);
+      });
+
+      it('el canal movil expone EXACTAMENTE las rutas previstas (sin finalizar, borrar ni escrituras alternativas)', () => {
+        const routes: Array<{ path: string; methods: string[] }> = [];
+        const stack: string[] = [];
+        for (const line of rw.printRoutes({ commonPrefix: false }).split('\n')) {
+          const m = /^([│ ]*)(?:├|└)── (\S+)(?: \(([^)]*)\))?$/.exec(line);
+          if (!m) continue;
+          const depth = m[1]!.length / 4;
+          const full = (depth === 0 ? '' : stack[depth - 1]!) + m[2]!;
+          stack[depth] = full;
+          if (m[3])
+            routes.push({
+              path: full,
+              methods: m[3]
+                .split(',')
+                .map((x) => x.trim())
+                .filter((x) => x !== 'HEAD'),
+            });
+        }
+        expect(routes.length).toBeGreaterThan(20);
+        const mobileRoutes = routes.filter((r) => r.path.startsWith('/mobile'));
+        expect(
+          mobileRoutes.some((r) => r.path === '/mobile/school/attendance/days/:id/marks'),
+        ).toBe(true);
+        const writes = mobileRoutes
+          .filter((r) => r.methods.some((m) => m !== 'GET'))
+          .map((r) => `${r.methods.filter((m) => m !== 'GET').join('+')} ${r.path}`)
+          .sort();
+        // las escrituras moviles de asistencia son EXACTAMENTE dos; el resto son de enrolamiento y sesion (sin datos escolares)
+        expect(writes.filter((w) => /school/.test(w))).toEqual([
+          'POST /mobile/school/attendance/days',
+          'POST /mobile/school/attendance/days/:id/marks',
+        ]);
+        expect(writes.some((w) => /finalize|DELETE|PUT|PATCH/.test(w))).toBe(false);
+        expect(
+          mobileRoutes.some((r) => r.methods.some((m) => ['DELETE', 'PUT', 'PATCH'].includes(m))),
+        ).toBe(false);
+      });
+
+      it('aislamiento de transacciones: las LECTURAS fijan la foto REPEATABLE READ como primera sentencia y las ESCRITURAS no la usan', async () => {
+        const txs: string[][] = [];
+        const spy = await hookedApp(async (sql) => {
+          if (sql === '--BEGIN--') txs.push([]);
+          else txs.at(-1)!.push(sql);
+        });
+        const f = await fixture('P3', 3, spy); // abre por el movil
+        /** Transacciones de ASISTENCIA (la autenticacion movil tiene las suyas) producidas por una peticion. */
+        const attendanceTxs = () =>
+          txs.filter((t) => t.some((l) => /attendance_days|attendance_records|groups g/.test(l)));
+        for (const url of [
+          `/mobile/school/attendance/days/${f.dayId}`,
+          '/mobile/school/attendance/today',
+          '/mobile/school/attendance/days',
+        ]) {
+          txs.length = 0;
+          const r = await call(spy, f.s, 'GET', url);
+          expect(r.statusCode, url).toBe(200);
+          const reads = attendanceTxs();
+          expect(reads, url).toHaveLength(1);
+          // la foto es la PRIMERA sentencia y la unica de aislamiento
+          expect(reads[0]![0], url).toBe('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+          expect(reads[0]!.filter((l) => /ISOLATION LEVEL/.test(l))).toHaveLength(1);
+        }
+        txs.length = 0;
+        const w = await save(spy, f.s, f.dayId, 1, marks([f.ids[0]!]));
+        expect(w.statusCode).toBe(200);
+        const writes = attendanceTxs();
+        expect(writes).toHaveLength(1);
+        expect(writes[0]!.some((l) => /ISOLATION LEVEL/.test(l))).toBe(false); // READ COMMITTED
+        expect(writes[0]!.some((l) => /FOR UPDATE/.test(l))).toBe(true); // serializada con el bloqueo de la lista
+        await spy.close();
+      });
+
+      it('errores de la base: conflictos y fallos temporales se distinguen; los desconocidos son 500 sin detalles internos; nada queda a medias y el reintento se aplica una vez', async () => {
+        const f = await fixture('P3', 4);
+        const internal = 'detalle-interno-ficticio';
+        const failing = (code: string | undefined) =>
+          Object.assign(new Error(internal), code ? { code } : {});
+        const cases: Array<[string | undefined, number, string | null]> = [
+          ['40001', 409, 'CONCURRENT'], // fallo de serializacion: reintentable, conflicto
+          ['40P01', 409, 'CONCURRENT'], // interbloqueo: reintentable, conflicto
+          ['23505', 409, 'CONCURRENT'], // violacion UNIQUE bajo concurrencia
+          ['23514', 400, 'INVALID'], // regla de integridad (sin restriccion conocida)
+          ['57P01', 503, 'DATABASE_UNAVAILABLE'], // base apagada
+          ['ECONNRESET', 503, 'DATABASE_UNAVAILABLE'], // conexion cortada
+          ['22012', 500, 'INTERNAL_ERROR'], // fallo de programacion: NO se disfraza de 503
+          [undefined, 500, 'INTERNAL_ERROR'], // error sin codigo: tampoco
+        ];
+        let rev = 1;
+        for (const [code, status, reason] of cases) {
+          let armed = true;
+          const flaky = await hookedApp(async (sql) => {
+            if (armed && sql.includes('UPDATE attendance_records r SET status')) {
+              armed = false;
+              throw failing(code);
+            }
+          });
+          const rid = uuid();
+          const before = await eventsOf(f.dayId);
+          const r = await save(
+            flaky,
+            f.s,
+            f.dayId,
+            rev,
+            marks([f.ids[0]!], rev % 2 ? 'present' : 'absent'),
+            rid,
+          );
+          expect([String(code), r.statusCode, json(r).error.code]).toEqual([
+            String(code),
+            status,
+            reason,
+          ]);
+          expect(r.body).not.toContain(internal); // sin detalles internos
+          expect(r.body).not.toMatch(/stack|at .*\.ts|\.js:/);
+          expect(await eventsOf(f.dayId)).toBe(before); // transaccion revertida completa
+          expect((await detail(rw, f.s, f.dayId)).day.revision).toBe(rev);
+          const retry = await save(
+            flaky,
+            f.s,
+            f.dayId,
+            rev,
+            marks([f.ids[0]!], rev % 2 ? 'present' : 'absent'),
+            rid,
+          );
+          expect([retry.statusCode, json(retry).replayed]).toEqual([200, false]); // se aplica UNA vez
+          rev += 1;
+          await flaky.close();
+        }
+        expect(kit.logs.join('\n')).not.toContain('Bearer'); // los registros no llevan credenciales
+      });
+    });
+
+    if (!opts.realConcurrency) return;
+    describe('concurrencia REAL con varias conexiones PostgreSQL', () => {
+      it('lectura con foto REPEATABLE READ: que la fila de la cuenta cambie entre la foto y la auditoria (clave foranea) NO produce un fallo de serializacion', async () => {
+        const f = await fixture('P3', 3);
+        let armed = false;
+        const app = await hookedApp(async (sql) => {
+          if (armed && sql.includes('INSERT INTO audit_events')) {
+            armed = false;
+            await q(`update users set display_name = display_name || '.' where id = $1`, [
+              f.account.id,
+            ]);
+          }
+        });
+        armed = true;
+        const r = await call(app, f.s, 'GET', `/mobile/school/attendance/days/${f.dayId}`);
+        expect(r.statusCode, r.body).toBe(200);
+        await app.close();
+      });
 
       it('1. abrir a la vez la misma lista (dos prefectas y varias peticiones): una sola lista, un solo 201', async () => {
         const g = await newGroup('C1');
