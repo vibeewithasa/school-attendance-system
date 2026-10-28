@@ -222,4 +222,45 @@ class ViewModelsTest {
         assertNull(vm.state.value.health) // no se hizo ninguna comprobacion
         assertEquals(false, vm.state.first().checkingHealth)
     }
+
+    @Test
+    fun `ver el resumen, preparar, perder y recuperar la conexion o cambiar de estado NO inicia ninguna sincronizacion`() = runTest {
+        val spy = SpyManualSync()
+        val repo = FakeRepository()
+        val network = NetworkMonitor.Fake(initial = true)
+        val summary = SummaryViewModel(repo, "g1", spy)
+        val connectivity = ConnectivityViewModel(network, encryption = null)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { summary.state.collect {} }
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { connectivity.state.collect {} }
+        repo.draft.value = draftOf(AttendanceMark.PRESENT, null)
+        summary.prepare("d1") // accion local
+        network.set(false)
+        network.set(true) // reconexion
+        repo.draft.value = draftOf(AttendanceMark.PRESENT, AttendanceMark.ABSENT) // cambio de estado de pantalla
+        summary.consumePrepareMessage()
+        assertEquals("ningun ciclo salvo la pulsacion", 0, spy.calls.size)
+        assertTrue((summary.state.value as SummaryUiState.Ready).syncAvailable)
+        summary.syncNow() // la UNICA via: la accion explicita de la persona
+        assertEquals(listOf("g1"), spy.calls)
+        summary.cancelSync()
+        assertEquals(1, spy.cancels)
+    }
+}
+
+/** Sincronizacion falsa que solo cuenta las pulsaciones. */
+private class SpyManualSync : mx.edu.eta15.prefectura.domain.ManualSync {
+    val calls = mutableListOf<String>()
+    var cancels = 0
+    override val available = true
+    override val state = MutableStateFlow(mx.edu.eta15.prefectura.domain.ManualSyncState())
+
+    override fun syncNow(groupId: String) {
+        calls += groupId
+    }
+
+    override fun cancel() {
+        cancels++
+    }
+
+    override fun consumeReport() = Unit
 }

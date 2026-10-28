@@ -114,18 +114,29 @@ class ManualSyncEngine(
         }
 
         var confirmed = 0
+        // Un NEEDS_REVIEW / CONFLICT de OTRA fecha (p. ej. la captura de ayer) sigue bloqueado y conservado, pero NO impide sincronizar
+        // la lista de hoy: son listas distintas. Cualquier otro resultado (fallo temporal, sin sesion, desconocido...) detiene el ciclo.
+        var carried: SyncResultKind? = null
         for ((date, dayOps) in sendable.groupBy { it.schoolDate }.toSortedMap()) {
-            val report = if (date != today.schoolToday) {
+            val isToday = date == today.schoolToday
+            val report = if (!isToday) {
                 historic(dayOps, today, ::checkIdentity, setInFlight)
             } else {
                 currentDay(groupId, dayOps, today, ::checkIdentity, setInFlight)
             }
             confirmed += report.confirmed
-            if (report.kind != SyncResultKind.CONFIRMED && report.kind != SyncResultKind.NOTHING_TO_SEND) {
-                return SyncReport(report.kind, confirmed)
+            when {
+                report.kind == SyncResultKind.CONFIRMED || report.kind == SyncResultKind.NOTHING_TO_SEND -> Unit
+                !isToday && (report.kind == SyncResultKind.NEEDS_REVIEW || report.kind == SyncResultKind.CONFLICT) ->
+                    carried = carried ?: report.kind
+                else -> return SyncReport(report.kind, confirmed)
             }
         }
-        return if (confirmed > 0) SyncReport(SyncResultKind.CONFIRMED, confirmed) else SyncReport(SyncResultKind.NOTHING_TO_SEND)
+        return when {
+            confirmed > 0 -> SyncReport(SyncResultKind.CONFIRMED, confirmed)
+            carried != null -> SyncReport(carried)
+            else -> SyncReport(SyncResultKind.NOTHING_TO_SEND)
+        }
     }
 
     // ================================================================================================ llamadas

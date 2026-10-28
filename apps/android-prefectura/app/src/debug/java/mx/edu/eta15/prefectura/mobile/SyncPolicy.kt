@@ -126,9 +126,11 @@ object SyncPolicy {
     fun classify(f: ApiResult.Failure, attempt: Int = 0): Reaction = when {
         f.isNetwork -> Reaction.Unknown
         f.code == "BAD_RESPONSE" -> Reaction.Unknown
+        // El CODIGO manda, no el estado: el backend real responde 401 DEVICE_REVOKED (token y recursos) y 403 NOT_ELIGIBLE (sesion nueva).
+        // Un dispositivo revocado o una cuenta no elegible bloquean el perfil aunque el estado sea 401 (verificado en el E2E de auditoria).
+        f.code == "DEVICE_REVOKED" || f.code == "NOT_ELIGIBLE" -> Reaction.AuthBlocked(f.code!!)
         f.status == 401 -> Reaction.Auth
-        f.status == 403 ->
-            if (f.code == "DEVICE_REVOKED" || f.code == "NOT_ELIGIBLE") Reaction.AuthBlocked(f.code) else Reaction.Review(OutboxReasons.FORBIDDEN)
+        f.status == 403 -> Reaction.Review(OutboxReasons.FORBIDDEN)
         f.status == 404 -> Reaction.Review(OutboxReasons.NOT_FOUND)
         f.status == 400 -> Reaction.Review(
             when (f.code) {

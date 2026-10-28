@@ -293,4 +293,34 @@ class OfflineCacheEncryptedTest {
         for (secret in listOf(dayId, prepared.requestId, "ACKNOWLEDGED", "SAVE_MARKS"))
             assertFalse("no debe aparecer en claro: $secret", raw.contains(secret))
     }
+
+    /**
+     * Auditoria 45: el PRIMER arranque puede abrirse desde dos sitios a la vez (el contenedor de la aplicacion y quien reintenta o prueba).
+     * Sin serializar la creacion de la clave, uno retira (`destroy`) la clave que el otro acaba de crear y la base queda cifrada con una
+     * clave que ya no existe (KeyMissing, fail closed pero inutilizable). Aperturas concurrentes sobre un almacenamiento NUEVO.
+     */
+    @Test
+    fun laPrimeraAperturaConcurrenteNoDestruyeLaClaveDeLaOtra() {
+        repeat(6) { trial ->
+            wipe()
+            val start = java.util.concurrent.CountDownLatch(1)
+            val errors = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
+            val threads = (1..6).map {
+                Thread {
+                    try {
+                        start.await()
+                        storage.open().close() // cada hilo con su propia instancia de SecureStorage (como el contenedor y la prueba)
+                    } catch (e: Throwable) {
+                        errors += e
+                    }
+                }
+            }
+            threads.forEach { it.start() }
+            start.countDown()
+            threads.forEach { it.join() }
+            assertTrue("intento $trial: apertura concurrente fallo: ${errors.map { it.javaClass.simpleName + ' ' + it.message }}", errors.isEmpty())
+            // y despues la base SIGUE abriendo con su clave (no quedo cifrada con una clave perdida)
+            storage.open().close()
+        }
+    }
 }

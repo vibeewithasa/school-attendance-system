@@ -84,6 +84,9 @@ class SandboxSyncE2eTest {
                 "sync" -> sync(db, lossy = false)
                 "lossy-sync" -> sync(db, lossy = true)
                 "state" -> state(db)
+                "prepare" -> prepare(db)
+                "ack-fail-on" -> ackFailure(db, on = true)
+                "ack-fail-off" -> ackFailure(db, on = false)
                 "other-state" -> otherState(db)
                 else -> throw AssertionError("fase desconocida: $phase")
             }
@@ -132,6 +135,32 @@ class SandboxSyncE2eTest {
         args.getString("expect")?.let { assertEquals(SyncResultKind.valueOf(it), report?.kind) }
     }
 
+    /** Solo "Preparar para sincronizar" del grupo (accion local): nada se envia. */
+    private suspend fun prepare(db: EtaDatabase) {
+        val repo = repo(db)
+        val group = groupOf(db)
+        val draft = repo.observeTodayDraft(group.id).first()!!.draftId
+        val result = repo.prepareForSync(draft)
+        say("PREPARE group=${group.name} result=${result::class.simpleName}")
+        dump(db, group.id)
+    }
+
+    /**
+     * Fallo REAL de Room en el SQLCipher del dispositivo: un disparador impide guardar el recibo de las marcas (la peticion SI
+     * llega al servidor y la respuesta es valida; lo que falla es guardarla). Persiste entre procesos hasta `ack-fail-off`.
+     */
+    private fun ackFailure(db: EtaDatabase, on: Boolean) {
+        val raw = db.openHelper.writableDatabase
+        raw.execSQL("DROP TRIGGER IF EXISTS t_e2e_no_ack")
+        if (on) {
+            raw.execSQL(
+                "CREATE TRIGGER t_e2e_no_ack BEFORE UPDATE OF state ON sync_operations WHEN NEW.state = 'ACKNOWLEDGED' AND NEW.kind = 'SAVE_MARKS' " +
+                    "BEGIN SELECT RAISE(ABORT, 'fallo de Room inyectado por el E2E'); END",
+            )
+        }
+        say("ACKFAIL on=$on")
+    }
+
     private suspend fun state(db: EtaDatabase) {
         dump(db, groupOf(db).id)
     }
@@ -142,6 +171,7 @@ class SandboxSyncE2eTest {
         say("OPS " + ops.joinToString(" | ") { "${it.kind}:${it.state}:seq=${it.seq}:attempts=${it.attempts}:ack=${it.ackRevision}:replayed=${it.ackReplayed}:reason=${it.reasonCode}:req=${it.requestId ?: "-"}:day=${it.serverDayId ?: "-"}:exp=${it.expectedRevision ?: "-"}" })
         val draft = repo.observeTodayDraft(groupId).first()
         say("MARKS " + (draft?.rows?.joinToString(",") { it.mark?.name?.lowercase() ?: "pending" } ?: "sin-borrador"))
+        say("AUTH state=${db.cacheDao().syncOf(profile())?.authState}")
     }
 
     private suspend fun otherState(db: EtaDatabase) {

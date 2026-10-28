@@ -73,26 +73,23 @@ class DebugManualSync(
 
     private var job: Job? = null
 
+    /** Serializa el arranque: la decision "hay un ciclo" y su inicio son una sola operacion (sin condiciones de carrera entre hilos). */
+    private val startLock = Any()
+
     override fun syncNow(groupId: String) {
-        var started = false
-        _state.update { cur ->
-            if (cur.running) {
-                cur
-            } else {
-                started = true
-                ManualSyncState(running = true, groupId = groupId, last = null)
+        synchronized(startLock) {
+            if (_state.value.running) return
+            _state.value = ManualSyncState(running = true, groupId = groupId, last = null)
+            job = scope.launch {
+                val report = try {
+                    engine.run(groupId)
+                } catch (_: CancellationException) {
+                    SyncReport(SyncResultKind.CANCELLED)
+                } catch (_: Exception) {
+                    SyncReport(SyncResultKind.RESULT_UNKNOWN)
+                }
+                _state.value = ManualSyncState(running = false, groupId = groupId, last = report ?: _state.value.last)
             }
-        }
-        if (!started) return
-        job = scope.launch {
-            val report = try {
-                engine.run(groupId)
-            } catch (_: CancellationException) {
-                SyncReport(SyncResultKind.CANCELLED)
-            } catch (_: Exception) {
-                SyncReport(SyncResultKind.RESULT_UNKNOWN)
-            }
-            _state.value = ManualSyncState(running = false, groupId = groupId, last = report ?: _state.value.last)
         }
     }
 

@@ -743,9 +743,13 @@ Sincronización automática, `WorkManager`, finalización móvil, capturas hist�
 
 ### 22.4 Resultados (datos ficticios)
 
-JVM 159 (debug) y 70 (release), instrumentadas 172 y **E2E 51/51** contra el servidor de pruebas con PostgreSQL 18 desechable: **9 GET y 4 POST** de asistencia en todo el escenario (1 OPEN + 3 SAVE_MARKS: envío, envío con respuesta perdida y su repetición idempotente), cero duplicados en el servidor, cero respuestas 401, **0 peticiones al recuperar la conexión sin pulsar nada**. Ver el detalle en android-prefectura.md.
+JVM 168 (debug) y 71 (release) tras la auditoría 45, instrumentadas 173 y **E2E 51/51** contra el servidor de pruebas con PostgreSQL 18 desechable: **9 GET y 4 POST** de asistencia en todo el escenario (1 OPEN + 3 SAVE_MARKS: envío, envío con respuesta perdida y su repetición idempotente), cero duplicados en el servidor, cero respuestas 401, **0 peticiones al recuperar la conexión sin pulsar nada**. Ver el detalle en android-prefectura.md.
 
-### 22.5 Pendiente
+### 22.5 Auditoría independiente (Prompt 45)
+
+Tres defectos demostrados y corregidos: una operación bloqueada de otra fecha impedía sincronizar la lista de hoy; el backend real responde **401** `DEVICE_REVOKED` (el cliente solo bloqueaba con 403); y el primer arranque del almacenamiento cifrado tenía una carrera (dos aperturas simultáneas destruían la clave). Más un endurecimiento del arranque del ciclo. Contrato cliente/backend verificado con 12 vectores del backend real. E2E adicionales: padrón cambiado (incorporado y dado de baja) 27/27, fallo real de Room + finalización web + revocaciones 41/41, fecha escolar (sábado y jueves) 12/12 cada una; concurrencia con PostgreSQL 18 real (`test:pg-temp`) 611/611. Detalle y límites en [android-prefectura.md](android-prefectura.md).
+
+### 22.6 Pendiente
 
 Política institucional para `NEEDS_REVIEW`/`CONFLICT` (quién y cómo los resuelve), capturas tardías, conservación local, una sincronización automática (con su propio ADR y pruebas), finalización móvil y la aprobación de los ADR 0005 y 0006.
 

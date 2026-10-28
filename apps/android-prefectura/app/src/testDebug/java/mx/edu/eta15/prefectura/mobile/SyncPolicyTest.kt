@@ -129,7 +129,11 @@ class SyncPolicyTest {
         assertEquals(Reaction.Unknown, classify(0))
         assertEquals(Reaction.Unknown, classify(200, "BAD_RESPONSE"))
         assertEquals(Reaction.Auth, classify(401, "SESSION_ENDED"))
+        assertEquals(Reaction.AuthBlocked("DEVICE_REVOKED"), classify(401, "DEVICE_REVOKED")) // contrato REAL del backend (E2E de auditoria)
         assertEquals(Reaction.AuthBlocked("DEVICE_REVOKED"), classify(403, "DEVICE_REVOKED"))
+        assertEquals(Reaction.AuthBlocked("NOT_ELIGIBLE"), classify(401, "NOT_ELIGIBLE"))
+        assertEquals(Reaction.Auth, classify(401, "SESSION_ENDED"))
+        assertEquals(Reaction.Auth, classify(401, "UNAUTHENTICATED")) // cuenta desactivada en un recurso: indistinguible, se pide autenticar
         assertEquals(Reaction.AuthBlocked("NOT_ELIGIBLE"), classify(403, "NOT_ELIGIBLE"))
         assertEquals(Reaction.Review(OutboxReasons.FORBIDDEN), classify(403, "FORBIDDEN"))
         assertEquals(Reaction.Review(OutboxReasons.NOT_FOUND), classify(404, "NOT_FOUND"))

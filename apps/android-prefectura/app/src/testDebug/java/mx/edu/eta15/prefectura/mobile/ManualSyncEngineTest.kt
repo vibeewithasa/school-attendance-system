@@ -7,6 +7,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.cancel
 import mx.edu.eta15.prefectura.data.OfflineCacheStore
 import mx.edu.eta15.prefectura.data.SandboxIds
 import mx.edu.eta15.prefectura.domain.OperationKind
@@ -463,10 +464,16 @@ class ManualSyncEngineTest {
 
     @Test
     fun `dispositivo revocado o cuenta no elegible exigen autenticacion y bloquean el perfil`() = runTest {
-        val rig = failingSave(403, "DEVICE_REVOKED")
+        val rig = failingSave(401, "DEVICE_REVOKED") // el backend real responde 401 (no 403) para un dispositivo revocado
         assertEquals(SyncResultKind.SESSION_REQUIRED, rig.run().kind)
         assertEquals(OperationState.AUTH_REQUIRED, rig.store.op("save-1").state)
         assertEquals(OfflineCacheStore.AUTH_DEVICE_REVOKED, rig.store.blocked)
+        // y tambien cuando la revocacion se descubre al ABRIR LA SESION (antes de cualquier lectura)
+        val early = Rig(sessions = SyncFakeSessions(ApiResult.Failure(401, "DEVICE_REVOKED")))
+        early.store.prepared()
+        assertEquals(SyncResultKind.SESSION_REQUIRED, early.run().kind)
+        assertEquals(OfflineCacheStore.AUTH_DEVICE_REVOKED, early.store.blocked)
+        assertTrue(early.server.requests.isEmpty())
         val other = failingSave(403, "NOT_ELIGIBLE")
         other.run()
         assertEquals(OfflineCacheStore.AUTH_ACCOUNT_BLOCKED, other.store.blocked)
@@ -740,5 +747,78 @@ class ManualSyncEngineTest {
         assertFalse(OperationState.NEEDS_REVIEW.canTransitionTo(OperationState.SENDING))
         assertFalse(OperationState.CONFLICT.canTransitionTo(OperationState.SENDING))
         assertFalse(OperationState.LOCAL_ONLY.canTransitionTo(OperationState.SENDING))
+    }
+
+    // ============================================================================================ auditoria 45: bloqueos por fecha
+
+    @Test
+    fun `una operacion bloqueada de ayer NO impide sincronizar la lista de hoy del mismo grupo`() = runTest {
+        val rig = Rig()
+        // ayer: quedo en revision y nadie puede resolverla todavia (no hay politica de la escuela)
+        rig.store.prepared(date = "2026-10-26", saveId = "old-save", openId = "old-open")
+        rig.store.ops["old-save"] = rig.store.op("old-save").copy(state = OperationState.NEEDS_REVIEW)
+        rig.store.ops["old-open"] = rig.store.op("old-open").copy(state = OperationState.NEEDS_REVIEW)
+        // hoy: una captura nueva, preparada y valida
+        rig.store.prepared(date = TODAY, saveId = "new-save", openId = "new-open")
+        val report = rig.run()
+        assertEquals(SyncReport(SyncResultKind.CONFIRMED, 1), report)
+        assertEquals(OperationState.ACKNOWLEDGED, rig.store.op("new-save").state)
+        // lo de ayer sigue bloqueado y conservado: no se limpia, no se envia, no se mueve a hoy
+        assertEquals(OperationState.NEEDS_REVIEW, rig.store.op("old-save").state)
+        assertEquals("2026-10-26", rig.store.op("old-save").schoolDate)
+        assertEquals(1, rig.server.markPosts.size)
+    }
+
+    @Test
+    fun `un CONFLICT de otra fecha tampoco bloquea hoy y un fallo temporal de hoy se informa tal cual`() = runTest {
+        val rig = Rig()
+        rig.store.prepared(date = "2026-10-26", saveId = "old-save", openId = "old-open")
+        rig.store.ops["old-save"] = rig.store.op("old-save").copy(state = OperationState.CONFLICT)
+        rig.store.ops["old-open"] = rig.store.op("old-open").copy(state = OperationState.ACKNOWLEDGED)
+        rig.store.prepared(date = TODAY, saveId = "new-save", openId = "new-open")
+        rig.server.existingDay(1)
+        repeat(3) { rig.server.writeFailures.addLast(ApiResult.Failure(503, "DATABASE_UNAVAILABLE")) }
+        assertEquals(SyncResultKind.TEMPORARY_ERROR, rig.run().kind) // lo que pasa HOY se informa; lo de ayer no lo tapa
+        assertEquals(OperationState.CONFLICT, rig.store.op("old-save").state)
+    }
+
+    @Test
+    fun `una operacion de ayer que solo estaba bloqueada informa revision si hoy no hay nada que enviar`() = runTest {
+        val rig = Rig()
+        rig.store.prepared(date = "2026-10-26", saveId = "old-save", openId = "old-open")
+        rig.store.ops["old-save"] = rig.store.op("old-save").copy(state = OperationState.NEEDS_REVIEW)
+        assertEquals(SyncResultKind.NEEDS_REVIEW, rig.run().kind)
+        assertTrue(rig.posts().isEmpty())
+    }
+
+    // ============================================================================================ auditoria 45: un solo ciclo con varios hilos
+
+    @Test
+    fun `veinte pulsaciones simultaneas desde hilos distintos inician un unico ciclo y el estado sigue en ejecucion`() {
+        kotlinx.coroutines.runBlocking {
+            val rig = Rig()
+            rig.store.prepared()
+            rig.server.existingDay(1)
+            rig.server.gate = CompletableDeferred()
+            val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default + kotlinx.coroutines.SupervisorJob())
+            val manual = DebugManualSync(scope, rig.engine)
+            val start = java.util.concurrent.CountDownLatch(1)
+            val threads = (1..20).map { Thread { start.await(); manual.syncNow(GROUP) } }
+            threads.forEach { it.start() }
+            start.countDown()
+            threads.forEach { it.join() }
+            // espera a que el ciclo llegue a la peticion de guardado (bloqueada en la compuerta)
+            val end = System.currentTimeMillis() + 10_000
+            while (rig.server.markPosts.isEmpty() && System.currentTimeMillis() < end) kotlinx.coroutines.delay(10)
+            kotlinx.coroutines.delay(300) // da tiempo a que un ciclo duplicado, si existiera, termine y apague el indicador
+            assertTrue("el indicador de ejecucion debe seguir encendido mientras el ciclo esta en curso", manual.state.value.running)
+            assertEquals(1, rig.server.markPosts.size)
+            rig.server.gate!!.complete(Unit)
+            val end2 = System.currentTimeMillis() + 10_000
+            while (manual.state.value.running && System.currentTimeMillis() < end2) kotlinx.coroutines.delay(10)
+            assertEquals(SyncResultKind.CONFIRMED, manual.state.value.last?.kind)
+            assertEquals(1, rig.server.markPosts.size)
+            scope.cancel()
+        }
     }
 }
