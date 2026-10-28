@@ -6,9 +6,14 @@
  * cookie, CSRF ni `adminGuard`), (2) pasa el contexto del dispositivo a la auditoria y (3) PROYECTA la respuesta a los campos minimos
  * de `@eta15/shared-contracts` (sin nombres de alumnos, sin quien abrio o finalizo, sin `editable`).
  *
- * Que NO hay: POST/PATCH/PUT/DELETE, abrir listas, guardar marcas, finalizar ni historial. El token movil tampoco tiene
- * `attendance:capture` (ver MOBILE_ALLOWED_PERMISSIONS): aunque alguien registrara una ruta de escritura, el servicio la negaria.
- * Las rutas solo se registran con la configuracion explicita `mobile.attendanceRead` (apagada por omision; solo sandbox).
+ * Las rutas GET solo se registran con la configuracion explicita `mobile.attendanceRead` (apagada por omision; solo sandbox).
+ *
+ * ESCRITURA (fase 2, ADR 0006 propuesto): con `mobile.attendanceWrite` (apagada por omision; exige la lectura; solo sandbox) existen
+ * EXACTAMENTE dos operaciones POST: abrir la lista del dia (`POST /days`) y guardar marcas (`POST /days/:id/marks`). Reutilizan
+ * `service.open` y `service.saveMarks`: la fecha la decide el servidor, la autorizacion se revalida con bloqueo, el padron esta
+ * congelado, `expectedRevision` detecta conflictos y `requestId` + huella hacen idempotente cada reintento. NO existen finalizar,
+ * borrar, corregir ni historial; el token movil solo lleva `attendance:capture` (alcance `assigned_groups`) con el interruptor
+ * de escritura encendido. Con `attendanceWrite` apagado no se registra ninguna ruta POST y el token no lleva ese permiso.
  *
  * Fecha: "hoy" lo decide el servidor (America/Mazatlan, en el servicio). Las lecturas usan una FOTO consistente (REPEATABLE READ)
  * para que conteos, renglones y revision de una misma respuesta pertenezcan al mismo instante.
@@ -16,6 +21,8 @@
 import { createHash } from 'node:crypto';
 import {
   listAttendanceDaysQuery,
+  mobileOpenAttendanceDayBody,
+  saveAttendanceMarksBody,
   userIdSchema,
   type AttendanceDayDetail,
   type AttendanceDayDto,
@@ -24,7 +31,11 @@ import {
   type MobileAttendanceDayDetail,
   type MobileAttendanceDayDto,
   type MobileAttendanceDayList,
+  type MobileAttendanceOpenResponse,
+  type MobileAttendanceSaveResponse,
   type MobileAttendanceTodayResponse,
+  type OpenAttendanceDayResponse,
+  type SaveAttendanceMarksResponse,
 } from '@eta15/shared-contracts';
 import type { FastifyInstance, FastifyReply, FastifyRequest, RouteShorthandOptions } from 'fastify';
 import { z } from 'zod';
@@ -114,8 +125,24 @@ export const projectList = (r: AttendanceDayList): MobileAttendanceDayList => ({
   total: r.total,
 });
 
+export const projectOpen = (
+  r: OpenAttendanceDayResponse,
+  serverTime: Date,
+): MobileAttendanceOpenResponse => ({ day: projectDetail(r.day, serverTime), created: r.created });
+
+export const projectSave = (
+  r: SaveAttendanceMarksResponse,
+  serverTime: Date,
+): MobileAttendanceSaveResponse => ({
+  day: projectDetail(r.day, serverTime),
+  changed: r.changed,
+  replayed: r.replayed,
+});
+
 export interface MobileAttendanceRoutesOptions {
   service: AttendanceService;
+  /** Registra las DOS escrituras (abrir y guardar marcas). Apagado por omision: sin el, no existe ninguna ruta POST. */
+  write?: boolean;
   /** `config` de ruta (canal movil y limite de tasa) y guardas moviles; los define quien registra (auth.module). */
   config: Record<string, unknown>;
   preHandler: RouteShorthandOptions['preHandler'];
@@ -157,9 +184,10 @@ export function mobileAttendanceRoutes(
     reply: FastifyReply,
     result: AttendanceResult<T>,
     project: (value: T) => U,
+    success = 200,
   ) =>
     result.ok
-      ? reply.code(200).send(project(result.value))
+      ? reply.code(success).send(project(result.value))
       : reply
           .code(STATUS[result.code])
           .send(errorBody(result.reason ?? result.code, result.message, request.id));
@@ -188,5 +216,35 @@ export function mobileAttendanceRoutes(
       snapshot: true,
     });
     return send(request, reply, result, (v) => projectDetail(v, now()));
+  });
+
+  if (!options.write) return;
+
+  // ------------------------------------------------------------------------------------------------ ESCRITURA (sandbox)
+  // Abrir (u obtener) la lista de HOY del grupo. `attendanceDate` es OBLIGATORIA en el canal movil: el servidor la CONTRASTA con
+  // su "hoy" (otra fecha => 400 DATE_NOT_TODAY, sin crear nada), asi un dispositivo con el reloj mal nunca crea ni etiqueta la lista
+  // de otro dia. 201 si esta peticion la creo; 200 si ya existia (la misma lista para todas las personas con acceso).
+  app.post('/days', { ...route, bodyLimit: 1024 }, async (request, reply) => {
+    const body = mobileOpenAttendanceDayBody.safeParse(request.body);
+    if (!body.success) return invalid(request, reply);
+    const result = await service.open(mobileContext(request, coarseIp), body.data);
+    return send(
+      request,
+      reply,
+      result,
+      (v) => projectOpen(v, now()),
+      result.ok && result.value.created ? 201 : 200,
+    );
+  });
+
+  // Guardar marcas del borrador. `expectedRevision` = la revision que el cliente vio; `requestId` identifica la OPERACION (estable en
+  // los reintentos, distinto del `jti` de DPoP, que cambia en cada peticion). Mismo requestId con otro contenido o de otra cuenta =>
+  // 409 IDEMPOTENCY_MISMATCH. Una repeticion ya aplicada responde 200 con `replayed: true`.
+  app.post('/days/:id/marks', { ...route, bodyLimit: 32_768 }, async (request, reply) => {
+    const p = idParams.safeParse(request.params);
+    const body = saveAttendanceMarksBody.safeParse(request.body);
+    if (!p.success || !body.success) return invalid(request, reply);
+    const result = await service.saveMarks(mobileContext(request, coarseIp), p.data.id, body.data);
+    return send(request, reply, result, (v) => projectSave(v, now()));
   });
 }

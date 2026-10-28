@@ -58,6 +58,11 @@ async function main(): Promise<void> {
   const mobileAttendanceRead = process.argv.includes('--mobile-attendance-read');
   if (mobileAttendanceRead && !mobileAuth)
     throw new Error('--mobile-attendance-read requiere --mobile-auth (y sus indicadores)');
+  // --mobile-attendance-write habilita ademas la ESCRITURA movil de asistencia (ADR 0006, fase 2; propuesto): SOLO abrir la lista de hoy y
+  // guardar marcas. Sin finalizar ni capturas historicas. Exige --mobile-attendance-read.
+  const mobileAttendanceWrite = process.argv.includes('--mobile-attendance-write');
+  if (mobileAttendanceWrite && !mobileAttendanceRead)
+    throw new Error('--mobile-attendance-write requiere --mobile-attendance-read');
   const cluster = await startApiCluster(10, {
     catalogWrite,
     studentsWrite,
@@ -234,6 +239,7 @@ async function main(): Promise<void> {
             mobile: {
               publicBaseUrl: 'http://10.0.2.2:3000',
               ...(mobileAttendanceRead ? { attendanceRead: true } : {}),
+              ...(mobileAttendanceWrite ? { attendanceWrite: true } : {}),
             },
           }
         : {}),
@@ -246,6 +252,10 @@ async function main(): Promise<void> {
   if (mobileAttendanceRead)
     console.log(
       'AVISO: lectura MOVIL de asistencia habilitada (solo GET; sin escritura; ADR 0006 sigue como "propuesta").',
+    );
+  if (mobileAttendanceWrite)
+    console.log(
+      'AVISO: ESCRITURA movil de asistencia habilitada (solo abrir y guardar marcas; sin finalizar; ADR 0006 sigue como "propuesta").',
     );
   if (schoolTodayArg)
     console.log(

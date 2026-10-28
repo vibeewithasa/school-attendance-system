@@ -988,24 +988,42 @@ export function defineMobileAttendanceTests(
         sMobile = await session(on, 'H1');
       });
 
-      it('1. guardado SIN cambios: responde changed:0 y replayed:false, no deja evento y NO registra el requestId', async () => {
+      it('1. (CORREGIDO en la fase 2) guardado SIN cambios: deja un recibo durable, NO sube la revision y protege el requestId', async () => {
         const rid = uuid();
         const first = await wSave('H1', dayId, 1, marks([st[0]!]), rid);
         expect(first.statusCode, first.body).toBe(200);
         expect(json(first)).toMatchObject({ changed: 1, replayed: false });
         const events = await eventsCount();
-        const noop = await wSave('H1', dayId, 2, marks([st[0]!]), uuid()); // mismo contenido, requestId nuevo
-        expect(json(noop)).toMatchObject({ changed: 0, replayed: false });
-        expect(await eventsCount()).toBe(events); // sin evento: su requestId no quedo registrado
-        // consecuencia: el mismo requestId de un no-op puede reutilizarse luego con OTRO contenido sin IDEMPOTENCY_MISMATCH
         const noopId = uuid();
-        const a = await wSave('H1', dayId, 2, marks([st[0]!]), noopId);
-        expect(json(a).changed).toBe(0);
-        const b = await wSave('H1', dayId, 2, marks([st[1]!], 'absent'), noopId);
-        expect([b.statusCode, json(b).changed]).toEqual([200, 1]);
-        // en cambio, un requestId que SI dejo evento rechaza otro contenido
-        const bad = await wSave('H1', dayId, 3, marks([st[2]!]), rid);
+        const noop = await wSave('H1', dayId, 2, marks([st[0]!]), noopId); // mismo contenido, requestId nuevo
+        expect(json(noop)).toMatchObject({ changed: 0, replayed: false });
+        expect(json(noop).day.revision).toBe(2); // sin cambio de asistencia no sube la revision
+        expect(await eventsCount()).toBe(events + 1); // un solo evento de confirmacion (old = new)
+        const receipt = (
+          await q(
+            `select old_status, new_status, revision_after, payload_hash from attendance_events where attendance_day_id = $1 and request_id = $2`,
+            [dayId, noopId],
+          )
+        )[0]!;
+        expect(receipt.old_status).toBe(receipt.new_status);
+        expect(receipt.revision_after).toBe(2);
+        // el reintento identico se reconoce sin repetir nada
+        const again = await wSave('H1', dayId, 2, marks([st[0]!]), noopId);
+        expect(json(again)).toMatchObject({ changed: 0, replayed: true });
+        expect(await eventsCount()).toBe(events + 1);
+        // el mismo requestId con OTRO contenido se rechaza (antes se aceptaba) y no cambia nada
+        const other = await wSave('H1', dayId, 2, marks([st[1]!], 'absent'), noopId);
+        expect([other.statusCode, json(other).error.code]).toEqual([409, 'IDEMPOTENCY_MISMATCH']);
+        // ... y tambien lo rechaza si lo usa OTRA cuenta (el recibo es de quien lo envio)
+        const stolen = await wSave('H2', dayId, 2, marks([st[0]!]), noopId);
+        expect([stolen.statusCode, json(stolen).error.code]).toEqual([409, 'IDEMPOTENCY_MISMATCH']);
+        expect(await eventsCount()).toBe(events + 1);
+        // un requestId con cambios reales tambien rechaza otro contenido
+        const bad = await wSave('H1', dayId, 2, marks([st[2]!]), rid);
         expect([bad.statusCode, json(bad).error.code]).toEqual([409, 'IDEMPOTENCY_MISMATCH']);
+        // para las pruebas siguientes: una segunda marca real
+        const second = await wSave('H1', dayId, 2, marks([st[1]!], 'absent'));
+        expect([second.statusCode, json(second).changed]).toEqual([200, 1]);
       });
 
       it('2. una marca guardada NO se puede quitar: la API solo acepta present/absent y la base impide volver a pendiente', async () => {

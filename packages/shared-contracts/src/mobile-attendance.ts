@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type {
   AttendanceCountsDto,
   AttendanceDayStatus,
@@ -67,4 +68,33 @@ export interface MobileAttendanceDayList {
   page: number;
   pageSize: number;
   total: number;
+}
+
+// ------------------------------------------------------------------------------------------------ ESCRITURA (fase 2, sandbox)
+// Solo DOS operaciones, solo con `mobile.attendanceWrite` (apagada por omision): abrir la lista del dia y guardar marcas. No hay
+// finalizar, borrar ni historial. El cuerpo de guardado es el MISMO del portal (`saveAttendanceMarksBody`, en attendance.ts).
+
+/**
+ * POST /mobile/school/attendance/days. A diferencia del portal, `attendanceDate` es OBLIGATORIA: el servidor la contrasta con su
+ * "hoy" (America/Mazatlan) y rechaza otra fecha (400 DATE_NOT_TODAY) sin crear nada; el cliente nunca decide el dia efectivo.
+ */
+export const mobileOpenAttendanceDayBody = z
+  .object({ groupId: z.uuid(), attendanceDate: z.iso.date() })
+  .strict();
+export type MobileOpenAttendanceDayBody = z.infer<typeof mobileOpenAttendanceDayBody>;
+
+/** 201 si esta peticion creo la lista; 200 si ya existia (la misma para todas las personas con acceso). */
+export interface MobileAttendanceOpenResponse {
+  day: MobileAttendanceDayDetail;
+  created: boolean;
+}
+
+/**
+ * POST /mobile/school/attendance/days/:id/marks. `changed` = renglones que realmente cambiaron; `replayed: true` = ese `requestId`
+ * ya estaba aplicado con ESE contenido y de ESA cuenta: se devuelve el estado vigente sin repetir nada (tambien si no cambio nada).
+ */
+export interface MobileAttendanceSaveResponse {
+  day: MobileAttendanceDayDetail;
+  changed: number;
+  replayed: boolean;
 }

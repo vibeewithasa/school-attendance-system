@@ -10,6 +10,12 @@ export function createPgSessionStore(pool: Pool): SessionStore {
         query: (text, params) => client.query(text, params as unknown[]) as never,
       };
       let broken = false;
+      // Si la base corta la conexion en medio de la transaccion, pg emite 'error' en el cliente: sin un oyente tumbaria el proceso.
+      // El fallo llega a la consulta en curso (que lo traduce a una respuesta controlada) y la conexion se descarta.
+      const onError = () => {
+        broken = true;
+      };
+      client.on('error', onError);
       try {
         await client.query('BEGIN');
         const result = await fn(tx);
@@ -22,6 +28,7 @@ export function createPgSessionStore(pool: Pool): SessionStore {
         });
         throw error;
       } finally {
+        client.off('error', onError);
         client.release(broken);
       }
     },
