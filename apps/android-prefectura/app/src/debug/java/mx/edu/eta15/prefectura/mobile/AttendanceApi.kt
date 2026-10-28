@@ -48,6 +48,9 @@ interface AttendanceApi {
 
     suspend fun day(session: MobileSession, dayId: String): ApiResult<SrvDetail>
 
+    /** Padron vigente de hoy del grupo autorizado (lectura existente `/mobile/school/groups/:id/roster`; sin version ni huella). */
+    suspend fun groupRoster(session: MobileSession, groupId: String): ApiResult<Roster>
+
     /** `attendanceDate` es OBLIGATORIA: el servidor la contrasta con su "hoy" y rechaza otra fecha (400 DATE_NOT_TODAY). */
     suspend fun openDay(session: MobileSession, groupId: String, attendanceDate: String): ApiResult<SrvOpen>
 

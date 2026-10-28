@@ -33,6 +33,7 @@ import mx.edu.eta15.prefectura.testContext
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -69,6 +70,11 @@ private class RoomFakeServer(val remoteGroup: String, var roster: List<String>) 
         requests += "GET day"
         val d = day?.takeIf { it.id == dayId } ?: return ApiResult.Failure(404, "NOT_FOUND")
         return ApiResult.Ok(detail(d))
+    }
+
+    override suspend fun groupRoster(session: MobileSession, groupId: String): ApiResult<Roster> {
+        requests += "GET roster"
+        return ApiResult.Ok(Roster("1.º A", roster.map { RosterStudent(it, "Alumno Ficticio") }, remoteGroup, schoolToday))
     }
 
     override suspend fun openDay(session: MobileSession, groupId: String, attendanceDate: String): ApiResult<SrvOpen> {
@@ -218,7 +224,7 @@ class ManualSyncRoomTest {
         val server = RoomFakeServer(g1, listOf(s1, s2, s3))
         val report = engine(deviceA, server).run(group(deviceA))!!
         assertEquals(SyncReport(SyncResultKind.CONFIRMED, 1), report)
-        assertEquals(listOf("GET today", "POST open", "GET day", "POST marks"), server.requests)
+        assertEquals(listOf("GET today", "GET roster", "POST open", "GET day", "POST marks"), server.requests) // el padron se compara ANTES de abrir
         assertEquals(mapOf(s1 to "present", s2 to "absent"), server.day!!.marks)
         // recibo local durable
         val all = ops()
@@ -382,8 +388,10 @@ class ManualSyncRoomTest {
         capture()
         val server = RoomFakeServer(g1, listOf(s1, s2, s3, "54444444-0000-4000-8000-0000000000a4"))
         assertEquals(SyncResultKind.NEEDS_REVIEW, engine(deviceA, server).run(group(deviceA))!!.kind)
-        assertTrue(server.requests.none { it == "POST marks" })
+        assertTrue("ni se abrio la lista ni se enviaron marcas", server.requests.none { it.startsWith("POST") })
+        assertNull("el servidor no tiene ninguna lista nueva", server.day)
         assertEquals(OperationState.NEEDS_REVIEW.name, state("SAVE_MARKS"))
+        assertEquals(OperationState.NEEDS_REVIEW.name, state("OPEN"))
         assertEquals(listOf(AttendanceMark.PRESENT, AttendanceMark.ABSENT, null), marks())
     }
 

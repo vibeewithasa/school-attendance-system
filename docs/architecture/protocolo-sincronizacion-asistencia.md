@@ -506,6 +506,8 @@ Sin duplicados y sin pérdida de borradores son **invariantes transversales**: t
 
 Ninguna alternativa se marca como oficial ni se atribuye a la institución.
 
+Versión para la escuela (lenguaje no técnico, con situaciones concretas y preguntas exactas): [docs/product/decisiones-operativas-eta15.md](../product/decisiones-operativas-eta15.md). Equivalencias: D-01 = B-2, D-02 = B-4, D-03 = B-6, D-05 = B-3, D-06 = B-1, D-07 = B-7, D-08 = B-5 y B-8; D-04 (finalización), D-09 (responsabilidad del registro) y D-10 (justificantes y reportes) son nuevas.
+
 ## 17. Plan de implementación (cada fase con su revisión; ninguna se ejecuta ahora)
 
 | Fase | Contenido                                                                                                      | Compuerta                                                                                 |
@@ -749,7 +751,11 @@ JVM 168 (debug) y 71 (release) tras la auditoría 45, instrumentadas 173 y **E2E
 
 Tres defectos demostrados y corregidos: una operación bloqueada de otra fecha impedía sincronizar la lista de hoy; el backend real responde **401** `DEVICE_REVOKED` (el cliente solo bloqueaba con 403); y el primer arranque del almacenamiento cifrado tenía una carrera (dos aperturas simultáneas destruían la clave). Más un endurecimiento del arranque del ciclo. Contrato cliente/backend verificado con 12 vectores del backend real. E2E adicionales: padrón cambiado (incorporado y dado de baja) 27/27, fallo real de Room + finalización web + revocaciones 41/41, fecha escolar (sábado y jueves) 12/12 cada una; concurrencia con PostgreSQL 18 real (`test:pg-temp`) 611/611. Detalle y límites en [android-prefectura.md](android-prefectura.md).
 
-### 22.6 Pendiente
+### 22.6 Estabilización (Prompt 46)
+
+El padrón vigente del grupo se compara con el de la captura **antes de abrir** una lista nueva (sin cambiar el backend; si cambia entre la comparación y OPEN, la validación posterior de las marcas lo detecta y no se envía nada); la apertura del almacenamiento cifrado se probó con fallos inyectados de Keystore (temporal = recuperable; permanente = falla cerrado y conserva todo). Detalle en [android-prefectura.md](android-prefectura.md). Las decisiones que requieren a la escuela están redactadas para ella en [docs/product/decisiones-operativas-eta15.md](../product/decisiones-operativas-eta15.md) (D-01 a D-10, todas PENDIENTES; la tabla B-1…B-10 de §16 sigue siendo la referencia técnica).
+
+### 22.7 Pendiente
 
 Política institucional para `NEEDS_REVIEW`/`CONFLICT` (quién y cómo los resuelve), capturas tardías, conservación local, una sincronización automática (con su propio ADR y pruebas), finalización móvil y la aprobación de los ADR 0005 y 0006.
 

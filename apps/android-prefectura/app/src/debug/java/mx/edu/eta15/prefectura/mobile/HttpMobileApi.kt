@@ -236,6 +236,8 @@ class HttpMobileApi(
         return parse(raw, setOf(200), AttendanceJson::detail)
     }
 
+    override suspend fun groupRoster(session: MobileSession, groupId: String): ApiResult<Roster> = roster(session, groupId)
+
     override suspend fun openDay(session: MobileSession, groupId: String, attendanceDate: String): ApiResult<SrvOpen> {
         val path = "/mobile/school/attendance/days"
         val body = """{"groupId":${Dpop.jsonString(groupId)},"attendanceDate":${Dpop.jsonString(attendanceDate)}}"""

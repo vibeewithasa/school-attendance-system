@@ -61,6 +61,9 @@ private class SyncFakeServer : AttendanceApi {
     var dropResponseOnce = false
     var gate: CompletableDeferred<Unit>? = null
     var enabled = true
+    var rosterFailure: ApiResult.Failure? = null
+    /** Se ejecuta justo antes de abrir la lista (simula un cambio de padron ENTRE la comparacion y OPEN). */
+    var beforeOpen: (() -> Unit)? = null
 
     private fun dto(d: Day) = SrvDay(d.id, REMOTE_GROUP, TODAY, if (d.finalized) "finalized" else "draft", d.revision)
 
@@ -87,8 +90,16 @@ private class SyncFakeServer : AttendanceApi {
         return ApiResult.Ok(detail(d))
     }
 
+    override suspend fun groupRoster(session: MobileSession, groupId: String): ApiResult<Roster> {
+        requests += "GET roster"
+        rosterFailure?.let { return it }
+        if (!assigned) return ApiResult.Failure(404, "NOT_FOUND")
+        return ApiResult.Ok(Roster("1.º A", roster.map { RosterStudent(it, "Alumno Ficticio") }, REMOTE_GROUP, TODAY))
+    }
+
     override suspend fun openDay(session: MobileSession, groupId: String, attendanceDate: String): ApiResult<SrvOpen> {
         requests += "POST open"
+        beforeOpen?.invoke()
         writeFailures.removeFirstOrNull()?.let { return it }
         if (attendanceDate != schoolToday) return ApiResult.Failure(400, "DATE_NOT_TODAY")
         val existing = day
@@ -260,7 +271,7 @@ class ManualSyncEngineTest {
         val sealedRequestId = rig.store.op(saveId).requestId!!
         val report = rig.run()
         assertEquals(SyncReport(SyncResultKind.CONFIRMED, 1), report)
-        assertEquals(listOf("GET today", "POST open", "GET day", "POST marks"), rig.server.requests)
+        assertEquals(listOf("GET today", "GET roster", "POST open", "GET day", "POST marks"), rig.server.requests)
         val post = rig.server.markPosts.single()
         assertEquals(sealedRequestId, post.requestId)
         assertEquals(1, post.expectedRevision) // la revision que devolvio el servidor al abrir
@@ -820,5 +831,73 @@ class ManualSyncEngineTest {
             assertEquals(1, rig.server.markPosts.size)
             scope.cancel()
         }
+    }
+
+    // ============================================================================================ prompt 46: padron ANTES de OPEN
+
+    @Test
+    fun `un padron remoto distinto se detecta ANTES de abrir - no se abre la lista ni se envia nada`() = runTest {
+        for (remote in listOf(listOf(S1, S2, S3, "54444444-0000-4000-8000-0000000000a4"), listOf(S1, S2))) { // alumno incorporado / dado de baja
+            val rig = Rig()
+            rig.server.roster = remote
+            rig.store.prepared()
+            val payloadBefore = rig.store.payloads.getValue("save-1")
+            assertEquals(SyncResultKind.NEEDS_REVIEW, rig.run().kind)
+            assertEquals(listOf("GET today", "GET roster"), rig.server.requests) // ni POST open ni lectura de lista
+            assertNull(rig.server.day) // el servidor no tiene ninguna lista nueva
+            assertEquals(OperationState.NEEDS_REVIEW, rig.store.op("open-1").state)
+            assertEquals(OperationState.NEEDS_REVIEW, rig.store.op("save-1").state)
+            assertEquals(payloadBefore, rig.store.payloads.getValue("save-1")) // el borrador/payload no se tocan
+            // el siguiente ciclo sigue bloqueado y sin escrituras
+            assertEquals(SyncResultKind.NEEDS_REVIEW, rig.run().kind)
+            assertTrue(rig.posts().isEmpty())
+        }
+    }
+
+    @Test
+    fun `si la lista de hoy ya existe no se consulta el padron antes (la valida el detalle de la lista)`() = runTest {
+        val rig = Rig()
+        rig.server.existingDay(1)
+        rig.store.prepared()
+        assertEquals(SyncResultKind.CONFIRMED, rig.run().kind)
+        assertEquals(0, rig.server.requests.count { it == "GET roster" })
+    }
+
+    @Test
+    fun `el padron coincide y la lista se abre con normalidad (GET roster antes de POST open)`() = runTest {
+        val rig = Rig()
+        rig.store.prepared()
+        assertEquals(SyncResultKind.CONFIRMED, rig.run().kind)
+        val order = rig.server.requests
+        assertTrue(order.indexOf("GET roster") in 0 until order.indexOf("POST open"))
+    }
+
+    @Test
+    fun `un 404 del padron (grupo ya no autorizado) bloquea sin abrir y un fallo temporal no cambia nada`() = runTest {
+        val gone = Rig()
+        gone.server.assigned = true
+        gone.server.rosterFailure = ApiResult.Failure(404, "NOT_FOUND")
+        gone.store.prepared()
+        assertEquals(SyncResultKind.NEEDS_REVIEW, gone.run().kind)
+        assertEquals(OperationState.NEEDS_REVIEW, gone.store.op("save-1").state)
+        assertTrue(gone.posts().isEmpty())
+        val temp = Rig()
+        temp.server.rosterFailure = ApiResult.Failure(503, "DATABASE_UNAVAILABLE")
+        temp.store.prepared()
+        assertEquals(SyncResultKind.TEMPORARY_ERROR, temp.run().kind)
+        assertEquals(OperationState.READY, temp.store.op("open-1").state) // nada cambio: se puede reintentar
+        assertEquals(OperationState.WAITING_REMOTE_CONTEXT, temp.store.op("save-1").state)
+        assertTrue(temp.posts().isEmpty())
+    }
+
+    @Test
+    fun `si el padron cambia ENTRE la comparacion y OPEN no se envia ninguna marca (no hay atomicidad entre llamadas, pero SAVE_MARKS lo detecta)`() = runTest {
+        val rig = Rig()
+        rig.store.prepared()
+        rig.server.beforeOpen = { rig.server.roster = rig.server.roster + "54444444-0000-4000-8000-0000000000a4" } // cambia justo antes de abrir
+        assertEquals(SyncResultKind.NEEDS_REVIEW, rig.run().kind)
+        assertEquals(1, rig.server.requests.count { it == "POST open" }) // la carrera permite abrir (limite del contrato)...
+        assertEquals(0, rig.server.markPosts.size) // ...pero JAMAS se envian marcas con otro padron
+        assertEquals(OperationState.NEEDS_REVIEW, rig.store.op("save-1").state)
     }
 }

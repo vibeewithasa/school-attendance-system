@@ -228,7 +228,7 @@ class ManualSyncEngine(
         var confirmed = 0
         // ---- OPEN
         ops.firstOrNull { it.kind == OperationKind.OPEN }?.let { open ->
-            val r = resolveOpen(open, groupId, entry.day, today, check, setInFlight)
+            val r = resolveOpen(open, ops, entry.day, today, check, setInFlight)
             if (r != null) return SyncReport(r, confirmed)
         }
         // ---- SAVE_MARKS, en orden de secuencia (la dependencia con la anterior ya esta confirmada o se detiene el ciclo)
@@ -248,6 +248,23 @@ class ManualSyncEngine(
         return SyncReport(if (confirmed > 0) SyncResultKind.CONFIRMED else SyncResultKind.NOTHING_TO_SEND, confirmed)
     }
 
+    /** `null` si el padron vigente del servidor coincide con el de la captura; si no, el resultado del ciclo (nada se abrio ni se envio). */
+    private suspend fun prevalidateRoster(open: SyncOp, dayOps: List<SyncOp>, check: () -> Unit): SyncResultKind? {
+        suspend fun block(reason: String): SyncResultKind {
+            for (op in dayOps) if (!store.move(op.id, OperationState.NEEDS_REVIEW, reason)) return SyncResultKind.RESULT_UNKNOWN
+            return SyncResultKind.NEEDS_REVIEW
+        }
+        return when (val r = call(write = false, check = check) { api.groupRoster(it, open.remoteGroupId) }) {
+            is Call.Ok -> {
+                val remote = r.value.students.map { it.id.lowercase() }.toSet()
+                val sameGroup = r.value.groupId.isEmpty() || r.value.groupId.lowercase() == open.remoteGroupId.lowercase()
+                if (sameGroup && remote == store.localRoster(open.draftId)) null else block(OutboxReasons.ROSTER_CHANGED)
+            }
+            // 404 = el grupo ya no esta autorizado para esta persona (no se enumera nada mas)
+            is Call.Failed -> if (r.failure.status == 404) block(OutboxReasons.GROUP_NOT_ASSIGNED) else failedRead(r, open).kind
+        }
+    }
+
     /**
      * OPEN del dia. Si la lista YA existe se reutiliza su `dayId` y su revision sin escribir nada (el servidor tiene una sola lista
      * por grupo y fecha). Si no, se abre. Si se pierde la respuesta, el siguiente ciclo consulta primero "hoy": no se abre dos veces.
@@ -255,12 +272,17 @@ class ManualSyncEngine(
      */
     private suspend fun resolveOpen(
         open: SyncOp,
-        groupId: String,
+        dayOps: List<SyncOp>,
         existing: SrvDay?,
         today: SrvToday,
         check: () -> Unit,
         setInFlight: (String?) -> Unit,
     ): SyncResultKind? {
+        // PADRON ANTES DE OPEN: si hay que ABRIR la lista (el servidor congelaria el padron vigente de hoy), se compara primero ese padron con
+        // el de la captura. Si no coincide no se abre nada, no se envia ninguna marca y todo queda en NEEDS_REVIEW (no se aplica el padron
+        // remoto). No es atomico con OPEN (son llamadas HTTP distintas; el contrato no ofrece una validacion dentro de OPEN): si el padron
+        // cambia entre la comparacion y OPEN, la validacion posterior de SAVE_MARKS lo detecta igual y no se envia ninguna marca.
+        if (existing == null) prevalidateRoster(open, dayOps, check)?.let { return it }
         if (open.state == OperationState.WAITING_REMOTE_CONTEXT) {
             // La fecha escolar la confirma ahora el servidor (la operacion nacio con la fecha sin confirmar).
             if (!store.setContext(open.id, null, null)) return SyncResultKind.RESULT_UNKNOWN

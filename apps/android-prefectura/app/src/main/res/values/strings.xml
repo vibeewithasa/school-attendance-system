@@ -105,12 +105,12 @@
     <string name="reset_confirm_yes">Restablecer</string>
     <!-- Almacenamiento protegido -->
     <string name="storage_failed_title">No se pudo abrir el almacenamiento protegido</string>
-    <string name="storage_failed_guarantee">No se borró nada ni se creó una base vacía. Las capturas guardadas siguen en el dispositivo, cifradas. La app no muestra datos hasta poder abrirlas con su clave.</string>
+    <string name="storage_failed_guarantee">No se borró nada ni se creó una base vacía encima. Lo guardado en este dispositivo se conserva sin cambios, cifrado. La app no muestra datos mientras no se pueda abrir con su clave, y no se envía nada al servidor.</string>
     <string name="storage_retry">Reintentar</string>
-    <string name="storage_reason_key_missing">Falta la clave protegida de este almacenamiento (puede ocurrir tras restablecer el dispositivo o sus credenciales de seguridad).</string>
-    <string name="storage_reason_key_invalidated">Android invalidó la clave protegida (por ejemplo, tras cambiar el bloqueo de pantalla).</string>
-    <string name="storage_reason_key_corrupt">El archivo de la clave protegida está dañado o fue alterado.</string>
-    <string name="storage_reason_keystore">El almacén seguro de Android (Keystore) no está disponible en este momento.</string>
+    <string name="storage_reason_key_missing">Falta la clave protegida de este almacenamiento (puede ocurrir tras restablecer el dispositivo o sus credenciales de seguridad). Los datos locales no están disponibles y la clave no se puede recuperar desde la app; los archivos se conservan para una posible revisión autorizada.</string>
+    <string name="storage_reason_key_invalidated">Android invalidó la clave protegida (por ejemplo, tras cambiar el bloqueo de pantalla). Los datos locales no están disponibles y la clave no se puede recuperar desde la app; los archivos se conservan para una posible revisión autorizada. Reintentar no los recupera.</string>
+    <string name="storage_reason_key_corrupt">El archivo de la clave protegida está dañado o fue alterado. Los datos locales no están disponibles; los archivos se conservan para una posible revisión autorizada.</string>
+    <string name="storage_reason_keystore">El almacén seguro de Android (Keystore) no está disponible en este momento. Es un fallo temporal: puedes reintentar; tus datos no se tocaron.</string>
     <string name="storage_reason_unreadable">La base cifrada no se pudo abrir: la clave no corresponde o el archivo está dañado.</string>
     <string name="storage_reason_legacy_unknown">Hay una base anterior sin cifrar que no se reconoce; no se tocó.</string>
     <string name="storage_reason_conversion">No se pudo convertir la base anterior a almacenamiento cifrado; la base anterior quedó intacta.</string>
