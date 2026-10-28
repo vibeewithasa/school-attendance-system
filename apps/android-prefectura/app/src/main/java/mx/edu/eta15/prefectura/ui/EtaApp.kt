@@ -21,6 +21,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import mx.edu.eta15.prefectura.AppContainer
 import mx.edu.eta15.prefectura.R
+import mx.edu.eta15.prefectura.StorageState
+import mx.edu.eta15.prefectura.domain.AttendanceRepository
 
 object Routes {
     const val HOME = "home"
@@ -42,13 +44,31 @@ private val groupArg = listOf(navArgument("groupId") { type = NavType.StringType
 
 @Composable
 fun EtaApp(container: AppContainer, navController: NavHostController = rememberNavController()) {
-    val ready by container.ready.collectAsStateWithLifecycle()
-    if (!ready) {
-        EtaScaffold(title = stringResource(R.string.app_name)) { padding -> LoadingView(Modifier.padding(padding)) }
-        return
+    val storage by container.storage.collectAsStateWithLifecycle()
+    when (val s = storage) {
+        StorageState.Opening ->
+            EtaScaffold(title = stringResource(R.string.app_name)) { padding -> LoadingView(Modifier.padding(padding)) }
+        // Fail closed: ningun dato ni base vacia de respaldo; solo se explica y se ofrece reintentar.
+        is StorageState.Failed ->
+            EtaScaffold(title = stringResource(R.string.app_name)) { padding ->
+                StorageFailureScreen(
+                    error = s.error,
+                    onRetry = container::retryOpen,
+                    onWipeDemo = container::wipeDemoStorageAndRestart,
+                    contentPadding = padding,
+                )
+            }
+        is StorageState.Ready -> EtaNavHost(container, s.repository, s.encryption, navController)
     }
-    val repo = container.repository
+}
 
+@Composable
+private fun EtaNavHost(
+    container: AppContainer,
+    repo: AttendanceRepository,
+    encryption: String?,
+    navController: NavHostController,
+) {
     NavHost(navController = navController, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
             val vm: HomeViewModel = viewModel(factory = factory { HomeViewModel(repo) })
@@ -115,7 +135,7 @@ fun EtaApp(container: AppContainer, navController: NavHostController = rememberN
             }
         }
         composable(Routes.CONNECTIVITY) {
-            val vm: ConnectivityViewModel = viewModel(factory = factory { ConnectivityViewModel(container.networkMonitor) })
+            val vm: ConnectivityViewModel = viewModel(factory = factory { ConnectivityViewModel(container.networkMonitor, encryption) })
             val state by vm.state.collectAsStateWithLifecycle()
             EtaScaffold(title = stringResource(R.string.connectivity_title), onBack = { navController.popBackStack() }) { padding ->
                 ConnectivityScreen(

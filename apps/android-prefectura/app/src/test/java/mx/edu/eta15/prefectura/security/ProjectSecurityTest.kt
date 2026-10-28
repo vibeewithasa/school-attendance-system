@@ -74,7 +74,8 @@ class ProjectSecurityTest {
     fun `no hay credenciales ni tokens en el codigo ni en los recursos`() {
         val forbidden = Regex("(password|contrase[nñ]a|secret|bearer|authorization|api[_-]?key|token)", RegexOption.IGNORE_CASE)
         val offenders = sourceFiles("src/main", "src/debug", "src/release")
-            .filter { forbidden.containsMatchIn(it.readText()) }
+            // `SecretKey` es el tipo estandar de javax.crypto (API de Keystore), no un secreto.
+            .filter { forbidden.containsMatchIn(it.readText().replace("SecretKey", "")) }
             .map { it.path }
         assertTrue("Archivos con palabras de credenciales: $offenders", offenders.isEmpty())
     }
@@ -108,5 +109,58 @@ class ProjectSecurityTest {
         assertFalse(joined.contains("X-CSRF"))
         assertFalse(joined.contains("Origin"))
         assertFalse(joined.contains("SharedPreferences"))
+    }
+
+    @Test
+    fun `la app real solo abre Room cifrada con SQLCipher y no usa la base en claro`() {
+        val builders = sourceFiles("src/main", "src/debug", "src/release")
+            .filter { it.extension == "kt" && it.readText().contains("Room.databaseBuilder") }
+            .map { it.name }
+        assertEquals("Room.databaseBuilder solo en SecureStorage", listOf("SecureStorage.kt"), builders)
+        val secure = file("src/main/java/mx/edu/eta15/prefectura/data/secure/SecureStorage.kt").readText()
+        assertTrue(secure.contains("openHelperFactory(factory)"))
+        assertTrue(secure.contains("SupportOpenHelperFactory"))
+        // el contenedor de produccion abre mediante SecureStorage, no con una base en memoria ni sin cifrar
+        val container = file("src/main/java/mx/edu/eta15/prefectura/AppContainer.kt").readText()
+        assertTrue(container.contains("SecureStorage("))
+        assertFalse(container.contains("inMemory"))
+        assertFalse(file("src/main/java/mx/edu/eta15/prefectura/data/local/EtaDatabase.kt").readText().contains("databaseBuilder"))
+    }
+
+    @Test
+    fun `la clave se guarda solo envuelta y en el directorio excluido de las copias`() {
+        val vault = file("src/main/java/mx/edu/eta15/prefectura/data/secure/KeystoreKeyVault.kt").readText()
+        assertTrue(vault.contains("noBackupFilesDir"))
+        assertFalse("no usa filesDir normal", Regex("""(?<![A-Za-z])filesDir""").containsMatchIn(vault))
+        assertFalse(vault.contains("getSharedPreferences"))
+        assertTrue(vault.contains("AES/GCM/NoPadding"))
+        assertTrue(vault.contains("AndroidKeyStore"))
+        assertTrue(vault.contains("SecureRandom"))
+        assertTrue(vault.contains("setRandomizedEncryptionRequired(true)"))
+    }
+
+    @Test
+    fun `no hay claves ni constantes hexadecimales largas en el codigo`() {
+        val hexRun = Regex("""[0-9a-fA-F]{32,}""")
+        val offenders = sourceFiles("src/main", "src/debug", "src/release")
+            .filter { it.extension == "kt" && hexRun.containsMatchIn(it.readText()) }
+            .map { it.path }
+        assertTrue("Posibles claves literales: $offenders", offenders.isEmpty())
+    }
+
+    @Test
+    fun `el codigo de almacenamiento no escribe en logs`() {
+        val offenders = sourceFiles("src/main", "src/debug", "src/release")
+            .filter { it.extension == "kt" }
+            .filter { Regex("""\bLog\.\w+\(|println\(|Timber\.""").containsMatchIn(it.readText()) }
+            .map { it.path }
+        assertTrue("Sin registros en el codigo de la app: $offenders", offenders.isEmpty())
+    }
+
+    @Test
+    fun `la base cifrada tiene un nombre distinto al de la base anterior sin cifrar`() {
+        val secure = file("src/main/java/mx/edu/eta15/prefectura/data/secure/SecureStorage.kt").readText()
+        assertTrue(secure.contains("SECURE_NAME = \"eta15_secure.db\""))
+        assertTrue(secure.contains("LEGACY_NAME = \"eta15_local.db\""))
     }
 }

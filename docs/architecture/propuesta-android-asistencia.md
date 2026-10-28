@@ -1,6 +1,6 @@
 # Propuesta: aplicación Android de asistencia para prefectura (offline-first)
 
-Estado: **propuesta de arquitectura, SIN protocolo de sincronización definido**. Redactada el 2026-10-27 sobre `main` = `2cd4614`. **La etapa 1 (app local con datos ficticios, sin red ni login) ya existe**: ver [android-prefectura.md](android-prefectura.md) y el [ADR 0005](../decisions/0005-android-autenticacion-movil.md) (autenticación móvil propuesta, no aceptada). El resto de este documento sigue siendo la propuesta para las etapas 2 a 5.
+Estado: **propuesta de arquitectura, SIN protocolo de sincronización definido**. Redactada el 2026-10-27 sobre `main` = `2cd4614`. **La etapa 1 (app local con datos ficticios, sin red ni login) ya existe y desde la etapa 2A su base local está cifrada**: ver [android-prefectura.md](android-prefectura.md) y el [ADR 0005](../decisions/0005-android-autenticacion-movil.md) (autenticación móvil propuesta, no aceptada). El resto de este documento sigue siendo la propuesta para las etapas 2 a 5.
 (asistencia diaria aplicada en `eta15_dev`, sin datos). Todo lo marcado como _decisión pendiente_ requiere acuerdo de la institución o una revisión de seguridad
 propia antes de implementarse. La comprobación del entorno (sección 1) se hizo antes de crear el proyecto; en la etapa 1 no hizo falta instalar `cmdline-tools`.
 

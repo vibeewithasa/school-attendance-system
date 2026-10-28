@@ -2,16 +2,20 @@ package mx.edu.eta15.prefectura
 
 import android.content.Context
 import java.time.Clock
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import mx.edu.eta15.prefectura.data.AndroidNetworkMonitor
 import mx.edu.eta15.prefectura.data.LocalAttendanceRepository
 import mx.edu.eta15.prefectura.data.NetworkMonitor
 import mx.edu.eta15.prefectura.data.local.EtaDatabase
+import mx.edu.eta15.prefectura.data.secure.SecureStorage
+import mx.edu.eta15.prefectura.data.secure.StorageException
 import mx.edu.eta15.prefectura.demo.DEMO_PROFILE_ID
 import mx.edu.eta15.prefectura.demo.DemoMode
 import mx.edu.eta15.prefectura.demo.NO_SESSION_PROFILE_ID
@@ -20,44 +24,116 @@ import mx.edu.eta15.prefectura.domain.IdGenerator
 import mx.edu.eta15.prefectura.domain.RemoteDataSource
 import mx.edu.eta15.prefectura.domain.UnavailableRemoteDataSource
 
+/** Estado del almacenamiento local. La UI no muestra datos hasta [Ready]; ante [Failed] no hay base vacia de respaldo. */
+sealed interface StorageState {
+    data object Opening : StorageState
+
+    /** `encryption` = version de SQLCipher que respondio (`PRAGMA cipher_version`); `null` solo en pruebas sin cifrado. */
+    data class Ready(val repository: AttendanceRepository, val encryption: String?) : StorageState
+
+    data class Failed(val error: StorageException) : StorageState
+}
+
 /**
  * Contenedor de dependencias manual (sin frameworks de inyeccion: no hacen falta en esta etapa).
- * Separa claramente: DemoDataSource (solo debug) -> Room (LocalDataSource, fuente de verdad de la UI) -> futura fuente remota.
+ * Separa claramente: DemoDataSource (solo debug) -> Room cifrada (LocalDataSource, fuente de verdad de la UI) -> futura
+ * fuente remota. La apertura del almacenamiento es asincrona y FAIL CLOSED (ver [SecureStorage]).
  */
 class AppContainer(
-    val db: EtaDatabase,
+    private val opener: suspend () -> EtaDatabase,
     val clock: Clock = Clock.systemUTC(),
     val ids: IdGenerator = IdGenerator.Random,
-    profileId: String = if (DemoMode.ENABLED) DEMO_PROFILE_ID else NO_SESSION_PROFILE_ID,
+    private val profileId: String = if (DemoMode.ENABLED) DEMO_PROFILE_ID else NO_SESSION_PROFILE_ID,
     val remote: RemoteDataSource = UnavailableRemoteDataSource,
     val networkMonitor: NetworkMonitor = NetworkMonitor.Unknown,
+    private val secureStorage: SecureStorage? = null,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
-    val repository: AttendanceRepository = LocalAttendanceRepository(db, profileId, clock, ids)
+    private val _storage = MutableStateFlow<StorageState>(StorageState.Opening)
+    val storage: StateFlow<StorageState> = _storage
 
-    private val _ready = MutableStateFlow(false)
-
-    /** `true` cuando la carga local inicial (solo demostracion en debug) termino. */
-    val ready: StateFlow<Boolean> = _ready
+    @Volatile
+    private var db: EtaDatabase? = null
 
     fun start() {
-        scope.launch {
-            if (DemoMode.ENABLED) DemoMode.seedIfEmpty(db, ids)
-            _ready.value = true
+        scope.launch { openAndSeed() }
+    }
+
+    /** Reintenta abrir el almacenamiento SIN borrar nada (p. ej. tras corregir el estado del dispositivo). */
+    fun retryOpen() {
+        scope.launch { openAndSeed() }
+    }
+
+    private suspend fun openAndSeed() {
+        _storage.value = StorageState.Opening
+        _storage.value = try {
+            val database = withContext(Dispatchers.IO) { opener() }
+            db = database
+            if (DemoMode.ENABLED) DemoMode.seedIfEmpty(database, ids)
+            StorageState.Ready(LocalAttendanceRepository(database, profileId, clock, ids), cipherVersion(database))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: StorageException) {
+            StorageState.Failed(e)
+        } catch (e: Exception) {
+            StorageState.Failed(StorageException.DatabaseUnreadable(e))
         }
     }
 
-    /** Borrado local controlado de la demostracion (solo debug; en release no hace nada). */
+    /** Borrado local controlado de los datos de demostracion (solo debug; en release no hace nada). */
     fun resetDemo() {
+        val database = db ?: return
         scope.launch {
-            _ready.value = false
-            DemoMode.reset(db, ids)
-            _ready.value = true
+            _storage.value = StorageState.Opening
+            DemoMode.reset(database, ids)
+            _storage.value = StorageState.Ready(LocalAttendanceRepository(database, profileId, clock, ids), cipherVersion(database))
         }
+    }
+
+    /**
+     * REINICIO EXPLICITO del almacenamiento de demostracion (solo debug): cierra y borra la base cifrada y sus claves, y
+     * vuelve a abrir. Se ofrece unicamente cuando la persona lo confirma; nunca ocurre solo ante un error. En release no
+     * existe (no hay modo demostracion) y jamas debe usarse con informacion escolar real.
+     */
+    fun wipeDemoStorageAndRestart() {
+        if (!DemoMode.ENABLED) return
+        val storage = secureStorage ?: return
+        scope.launch {
+            _storage.value = StorageState.Opening
+            withContext(Dispatchers.IO) {
+                runCatching { db?.close() }
+                db = null
+                storage.wipeAll()
+            }
+            openAndSeed()
+        }
+    }
+
+    private suspend fun cipherVersion(database: EtaDatabase): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            database.openHelper.writableDatabase.query("PRAGMA cipher_version").use { c ->
+                if (c.moveToFirst()) c.getString(0)?.takeIf { it.isNotBlank() } else null
+            }
+        }.getOrNull()
     }
 
     companion object {
-        fun create(context: Context): AppContainer =
-            AppContainer(EtaDatabase.build(context), networkMonitor = AndroidNetworkMonitor(context)).also { it.start() }
+        /** Produccion: almacenamiento cifrado con SQLCipher y clave protegida por Android Keystore. */
+        fun create(context: Context): AppContainer {
+            val storage = SecureStorage(context.applicationContext)
+            return AppContainer(
+                opener = { storage.open() },
+                networkMonitor = AndroidNetworkMonitor(context),
+                secureStorage = storage,
+            ).also { it.start() }
+        }
+
+        /** Pruebas: usa una base ya abierta (normalmente en memoria). */
+        fun forDatabase(
+            db: EtaDatabase,
+            clock: Clock = Clock.systemUTC(),
+            ids: IdGenerator = IdGenerator.Random,
+            networkMonitor: NetworkMonitor = NetworkMonitor.Unknown,
+        ): AppContainer = AppContainer(opener = { db }, clock = clock, ids = ids, networkMonitor = networkMonitor)
     }
 }

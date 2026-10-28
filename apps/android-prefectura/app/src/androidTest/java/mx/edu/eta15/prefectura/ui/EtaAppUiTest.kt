@@ -16,6 +16,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -46,7 +47,7 @@ class EtaAppUiTest {
 
     private fun launch() {
         db = EtaDatabase.inMemory(testContext())
-        val container = AppContainer(db, clock, SequentialIds("ui"), networkMonitor = network)
+        val container = AppContainer.forDatabase(db, clock, SequentialIds("ui"), network)
         container.start()
         rule.setContent { EtaTheme { EtaApp(container) } }
         waitForTag("home-groups")
@@ -191,7 +192,7 @@ class EtaAppUiTest {
         waitForTag("home-connectivity")
         rule.onNodeWithTag("home-connectivity").performClick()
         waitForTag("reset-demo")
-        rule.onNodeWithTag("reset-demo").performClick()
+        rule.onNodeWithTag("reset-demo").performScrollTo().performClick()
         rule.onNodeWithText("Restablecer").performClick()
         waitForTag("home-groups")
         rule.onNodeWithTag("home-groups").performClick()

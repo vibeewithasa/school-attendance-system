@@ -27,6 +27,10 @@ interface CatalogDao {
     @Query("DELETE FROM profiles")
     suspend fun deleteAllProfiles()
 
+    /** Borrado local controlado de UN perfil (cierre de sesion/cambio de titular): los demas perfiles no se tocan. */
+    @Query("DELETE FROM profiles WHERE id = :profileId")
+    suspend fun deleteProfile(profileId: String): Int
+
     @Query(
         """
         SELECT g.id AS id, g.name AS name, g.grade AS grade,

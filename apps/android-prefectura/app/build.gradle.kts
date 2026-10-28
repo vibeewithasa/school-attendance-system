@@ -91,6 +91,8 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
+    implementation(libs.sqlcipher.android)
+    implementation(libs.androidx.sqlite)
     implementation(libs.kotlinx.coroutines.android)
     // Ya es transitiva (1.7.3 via AndroidX); se fija 1.9.0 para que room-testing (androidTest) funcione con resolucion consistente.
     implementation(libs.kotlinx.serialization.core)

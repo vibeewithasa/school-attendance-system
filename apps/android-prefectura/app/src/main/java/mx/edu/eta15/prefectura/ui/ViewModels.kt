@@ -199,18 +199,20 @@ class SummaryViewModel(repo: AttendanceRepository, groupId: String) : ViewModel(
 // ---------- Conectividad y sincronizacion ----------
 
 data class ConnectivityUiState(
+    /** Version de SQLCipher que respondio; `null` = la base NO esta cifrada (solo posible en pruebas). */
+    val encryption: String? = null,
     val online: Boolean = false,
     val health: HealthResult? = null,
     val checkingHealth: Boolean = false,
 )
 
-class ConnectivityViewModel(network: NetworkMonitor) : ViewModel() {
+class ConnectivityViewModel(network: NetworkMonitor, private val encryption: String?) : ViewModel() {
     private val health = MutableStateFlow<HealthResult?>(null)
     private val checking = MutableStateFlow(false)
 
     val state: StateFlow<ConnectivityUiState> = combine(network.isOnline, health, checking) { online, h, c ->
-        ConnectivityUiState(online, h, c)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), ConnectivityUiState())
+        ConnectivityUiState(encryption, online, h, c)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), ConnectivityUiState(encryption))
 
     fun checkHealth() {
         if (!DevHealthCheck.AVAILABLE || checking.value) return

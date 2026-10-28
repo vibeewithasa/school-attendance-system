@@ -214,7 +214,7 @@ class ViewModelsTest {
     @Test
     fun `conectividad - el estado de red es solo informativo`() = runTest {
         val network = NetworkMonitor.Fake(initial = false)
-        val vm = ConnectivityViewModel(network)
+        val vm = ConnectivityViewModel(network, encryption = null)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
         assertFalse(vm.state.value.online)
         network.set(true)

@@ -11,9 +11,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *
  * - `version = 1`, `exportSchema = true` (esquemas versionados en `app/schemas`). NUNCA se usa
  *   `fallbackToDestructiveMigration`: un cambio de esquema exige una migracion escrita y probada.
- * - Room por si solo NO cifra los datos en reposo. En la etapa 1 solo se guardan datos sinteticos; el cifrado y la
- *   gestion de llaves (Android Keystore) deben disenarse ANTES de cargar datos escolares reales
- *   (ver docs/decisions/0005-android-autenticacion-movil.md).
+ * - Room por si solo NO cifra. En la app real SIEMPRE se abre mediante `SecureStorage` (SQLCipher + clave protegida por
+ *   Android Keystore); aqui solo queda el constructor en memoria para pruebas. Cifrar la base NO habilita datos escolares
+ *   reales: faltan autenticacion, revocacion y decisiones institucionales (docs/decisions/0005-android-autenticacion-movil.md).
  */
 @Database(
     entities = [
@@ -32,8 +32,6 @@ abstract class EtaDatabase : RoomDatabase() {
     abstract fun draftDao(): DraftDao
 
     companion object {
-        const val NAME = "eta15_local.db"
-
         /** Reglas que Room no expresa como anotaciones (equivalentes a los CHECK/triggers de PostgreSQL). */
         val integrityCallback = object : Callback() {
             override fun onOpen(db: SupportSQLiteDatabase) {
@@ -66,11 +64,6 @@ abstract class EtaDatabase : RoomDatabase() {
             BEGIN SELECT RAISE(ABORT, 'identidad del borrador inmutable'); END
             """.trimIndent(),
         )
-
-        fun build(context: Context): EtaDatabase =
-            Room.databaseBuilder(context.applicationContext, EtaDatabase::class.java, NAME)
-                .addCallback(integrityCallback)
-                .build()
 
         fun inMemory(context: Context): EtaDatabase =
             Room.inMemoryDatabaseBuilder(context.applicationContext, EtaDatabase::class.java)

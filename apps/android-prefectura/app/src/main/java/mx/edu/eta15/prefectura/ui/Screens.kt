@@ -251,6 +251,9 @@ fun ConnectivityScreen(
 
         InfoNotice(stringResource(R.string.connectivity_local_guarantee))
 
+        HorizontalDivider()
+        EncryptionSection(state.encryption)
+
         if (DevHealthCheck.AVAILABLE) {
             HorizontalDivider()
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

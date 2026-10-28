@@ -103,4 +103,28 @@
     <string name="reset_confirm_title">¿Restablecer la demostración?</string>
     <string name="reset_confirm_text">Se borrarán las capturas locales de demostración y se crearán datos ficticios nuevos.</string>
     <string name="reset_confirm_yes">Restablecer</string>
+    <!-- Almacenamiento protegido -->
+    <string name="storage_failed_title">No se pudo abrir el almacenamiento protegido</string>
+    <string name="storage_failed_guarantee">No se borró nada ni se creó una base vacía. Las capturas guardadas siguen en el dispositivo, cifradas. La app no muestra datos hasta poder abrirlas con su clave.</string>
+    <string name="storage_retry">Reintentar</string>
+    <string name="storage_reason_key_missing">Falta la clave protegida de este almacenamiento (puede ocurrir tras restablecer el dispositivo o sus credenciales de seguridad).</string>
+    <string name="storage_reason_key_invalidated">Android invalidó la clave protegida (por ejemplo, tras cambiar el bloqueo de pantalla).</string>
+    <string name="storage_reason_key_corrupt">El archivo de la clave protegida está dañado o fue alterado.</string>
+    <string name="storage_reason_keystore">El almacén seguro de Android (Keystore) no está disponible en este momento.</string>
+    <string name="storage_reason_unreadable">La base cifrada no se pudo abrir: la clave no corresponde o el archivo está dañado.</string>
+    <string name="storage_reason_legacy_unknown">Hay una base anterior sin cifrar que no se reconoce; no se tocó.</string>
+    <string name="storage_reason_conversion">No se pudo convertir la base anterior a almacenamiento cifrado; la base anterior quedó intacta.</string>
+    <string name="storage_wipe_title">Reiniciar la demostración (solo debug)</string>
+    <string name="storage_wipe_detail">Borra el almacenamiento cifrado de DEMOSTRACIÓN y sus claves, y lo crea de nuevo. Solo existe en la versión debug con datos ficticios.</string>
+    <string name="storage_wipe_button">Borrar demostración y empezar de nuevo</string>
+    <string name="storage_wipe_confirm_title">¿Borrar el almacenamiento de demostración?</string>
+    <string name="storage_wipe_confirm_text">Se eliminarán la base cifrada ficticia y sus claves. No se puede deshacer.</string>
+    <string name="storage_wipe_confirm_yes">Borrar</string>
+    <string name="encryption_title">Almacenamiento cifrado</string>
+    <string name="encryption_active">Cifrado en reposo de la base local: activo (SQLCipher %1$s)</string>
+    <string name="encryption_inactive">Cifrado en reposo de la base local: NO activo (solo posible en pruebas)</string>
+    <string name="encryption_caveat">El cifrado protege el archivo guardado en este dispositivo. No significa que la app esté lista para datos escolares reales: faltan inicio de sesión, revocación y decisiones de la escuela.</string>
+    <string name="license_notice">Base cifrada con SQLCipher Community Edition, © ZETETIC LLC (licencia BSD de 3 cláusulas).</string>
+    <string name="license_show">Ver texto de la licencia</string>
+    <string name="license_hide">Ocultar texto de la licencia</string>
 </resources>

@@ -1,6 +1,6 @@
 # ADR 0005 — Autenticación y sesiones de la app Android de prefectura
 
-- Estado: **propuesta (NO aceptada, NO implementada)**. Documenta el diseño que debe revisarse y aprobarse antes de escribir código de autenticación móvil o endpoints nuevos.
+- Estado: **propuesta (NO aceptada, NO implementada)**. Revisada el 2026-10-27 con una comparación de dos opciones y una recomendación técnica; la aceptación requiere decisiones de la institución (ver al final). No se escribirá código de autenticación móvil ni endpoints hasta aprobarla.
 - Fecha: 2026-10-27
 - Relacionados: [ADR 0004](0004-auth-sesiones-servidor-argon2id.md), [auth-rbac.md](../architecture/auth-rbac.md), [propuesta-android-asistencia.md](../architecture/propuesta-android-asistencia.md), [android-prefectura.md](../architecture/android-prefectura.md).
 
@@ -11,6 +11,44 @@ La API actual autentica **navegadores**: cookie de sesión `HttpOnly` + `SameSit
 Una app nativa no es un navegador: no tiene `Origin` confiable, el modelo de cookie con CSRF no encaja, y su uso offline choca con una sesión de 60 min. Además, el dispositivo guardará nombres de menores, de modo que su pérdida o robo es un riesgo propio.
 
 En la etapa 1 la app **no se conecta a la escuela**: solo opera con datos ficticios en modo demostración (debug). Este ADR define la dirección para la etapa siguiente.
+
+## Opciones comparadas (revisión del 2026-10-27)
+
+**A. Dispositivo registrado a nombre de la persona + credenciales protegidas por Keystore + sesiones móviles propias.** El servidor actual sigue siendo el único proveedor de identidad. El dispositivo prueba su identidad con una clave que no sale del Keystore (firma de un reto) además de las credenciales de la persona; la sesión móvil es corta, opaca y se guarda solo como hash en el servidor.
+
+**B. Autorización externa estándar (OAuth 2.0 / OIDC con Authorization Code + PKCE, navegador del sistema).** Un servidor de autorización emite los tokens; la app no maneja la contraseña. Estándar maduro y con buenas bibliotecas.
+
+| Criterio                        | A: dispositivo registrado                                                                                                             | B: OIDC + PKCE                                                                                                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Relación con el Auth actual     | Extiende lo existente (cuentas, roles, asignaciones, auditoría, argon2id) con una tabla de dispositivos y sesiones móviles            | El Auth actual **no es** un servidor OAuth/OIDC: habría que construir uno (grande y delicado) o adoptar uno externo y migrar la identidad                                               |
+| Dependencias externas           | Ninguna nueva                                                                                                                         | Un IdP (propio o de terceros): hospedaje, mantenimiento, cuentas escolares dentro de él, disponibilidad                                                                                 |
+| Complejidad de implementación   | Media: enrolamiento, reto firmado, renovación, revocación                                                                             | Media-alta si se construye el servidor; media si se adopta uno, pero con migración y doble administración de usuarios                                                                   |
+| Seguridad                       | Clave ligada al dispositivo (no exportable) + titular + revocación por dispositivo; superficie nueva que revisar                      | Flujo auditado por la industria; sin contraseña en la app; **no ata por sí mismo al dispositivo**: un token robado funciona en otro equipo salvo que se agregue vinculación (DPoP/mTLS) |
+| MFA                             | Hoy pospuesto; el dispositivo registrado + bloqueo de pantalla es un factor de posesión, no TOTP                                      | El IdP puede imponer MFA, pero la institución aún no definió política; el aplazamiento actual se arrastra igual                                                                         |
+| Captura prolongada sin red      | Se controla con el paquete del día y la caducidad definidos por la escuela; la clave local permite reanudar sin red dentro del límite | El token de acceso caduca pronto; sin red no se renueva: igual hay que definir caducidad offline y qué pasa al vencer                                                                   |
+| Pérdida o robo                  | Revocación del dispositivo en el servidor; la clave del Keystore no sale del equipo                                                   | Revocar el token/sesión en el IdP; el token robado puede usarse desde otro equipo hasta revocarlo                                                                                       |
+| Recuperación                    | Reenrolar con la autoridad (código de un solo uso en persona)                                                                         | Recuperación de cuenta del IdP                                                                                                                                                          |
+| Identidad de la prefecta        | Cuenta escolar existente + asignaciones actuales                                                                                      | Cuenta del IdP, que habría que mapear a las cuentas y asignaciones de ETA 15                                                                                                            |
+| Coste operativo para la escuela | Bajo: sin servicios nuevos; la autoridad administra dispositivos                                                                      | Mayor: operar o contratar un IdP, y capacitar                                                                                                                                           |
+| Autorización institucional      | Quién autoriza el enrolamiento y cómo se verifica a la persona                                                                        | Además: elegir y aprobar un proveedor de identidad                                                                                                                                      |
+
+### Recomendación técnica
+
+**Opción A**, por etapas y sin implementar ambas: reutiliza el modelo de cuentas, roles y asignaciones ya probado, no agrega dependencias ni un servidor de identidad, y da revocación por dispositivo. B solo se justifica si la institución decide adoptar un IdP común para varios sistemas; en ese caso el diseño de dispositivos de A sigue siendo útil como segundo factor de posesión. Ninguna opción habilita datos reales por sí sola: faltan MFA, bootstrap escolar y decisiones de privacidad.
+
+### Decisiones que requieren autorización institucional
+
+1. ¿La escuela aprueba la Opción A (o prefiere adoptar un IdP común, Opción B)?
+2. ¿Quién autoriza el enrolamiento de un dispositivo y cómo se verifica a la persona titular?
+3. ¿Qué duración máxima de sesión móvil, de paquete offline y de días sin conexión se acepta?
+4. ¿Qué ocurre con marcas capturadas offline que llegan tarde, tras medianoche o tras una revocación?
+5. ¿Qué dispositivos se usarán (propios de la escuela o personales) y cuál es el procedimiento de pérdida/robo?
+6. ¿Cómo se distribuyen, firman y actualizan los APK?
+7. ¿Cuándo se exige MFA y qué política de datos de menores aplica antes de cargar datos reales?
+
+## Estado del almacenamiento local (etapa 2A)
+
+La protección en reposo ya existe en la app de demostración (Room + SQLCipher con clave en Android Keystore; ver [android-prefectura.md](../architecture/android-prefectura.md)). Eso **reduce** el riesgo de la pérdida del dispositivo pero **no sustituye** a esta decisión: sigue sin haber autenticación, autorización, revocación ni sincronización.
 
 ## Lo que NO se hará (restricciones)
 
