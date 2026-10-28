@@ -116,7 +116,7 @@ describe('0010 sobre un clúster en el estado de eta15_dev (0000-0009)', () => {
   });
 
   it('se aplica sin errores; no cambia datos existentes; solo agrega 3 tablas, sus triggers y retira UNA asignacion de permiso (1 evento de auditoria)', async () => {
-    await applyMigrations(owner, { from: 10 });
+    await applyMigrations(owner, { from: 10, until: 11 }); // solo la 0010 (la 0011 tiene su propia prueba)
     for (const t of TABLES.filter((x) => x !== 'audit_events'))
       expect(await count(t), t).toBe(before[t]);
     expect(await count('audit_events')).toBe(before.audit_events! + 1);

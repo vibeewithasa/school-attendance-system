@@ -73,6 +73,7 @@ describe('historial de migraciones de Drizzle', () => {
     '0008_students_rbac_policy',
     '0009_prefect_group_assignments',
     '0010_daily_attendance',
+    '0011_mobile_device_auth',
   ];
 
   it('el journal registra todas las migraciones en orden, con marcas de tiempo crecientes', () => {

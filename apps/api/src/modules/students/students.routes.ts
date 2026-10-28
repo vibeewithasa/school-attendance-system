@@ -15,7 +15,7 @@ import {
   userIdSchema,
   withdrawBody,
 } from '@eta15/shared-contracts';
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest, RouteShorthandOptions } from 'fastify';
 import { z } from 'zod';
 import { errorBody, type AuthGuards } from '../auth/guards.js';
 import type {
@@ -162,11 +162,10 @@ export function studentsRoutes(app: FastifyInstance, options: StudentsRoutesOpti
   });
 
   // ------------------------------------------------------------------------------------------- lista de grupo (Android)
-  app.get('/groups/:id/roster', read, async (request, reply) => {
-    const p = idParams.safeParse(request.params);
-    if (!p.success || Object.keys((request.query as object) ?? {}).length > 0)
-      return invalid(request, reply);
-    return send(request, reply, await service.getGroupRoster(context(request), p.data.id));
+  groupRosterRoute(app, {
+    service,
+    config: rate,
+    preHandler: guards.adminGuard(options.mfaDeferredAllowed),
   });
 
   // ------------------------------------------------------------------------------------------- grupos
@@ -192,4 +191,35 @@ export function studentsRoutes(app: FastifyInstance, options: StudentsRoutesOpti
     if (!p.success || !body.success) return invalid(request, reply);
     return send(request, reply, await service.transfer(context(request), p.data.id, body.data));
   });
+}
+
+/**
+ * `GET /groups/:id/roster`: padron minimo de un grupo AUTORIZADO para quien consulta (404 si no lo es). Se registra en el canal web
+ * (cookie) y en el movil (token DPoP) con el MISMO handler y el MISMO servicio; el alcance `assigned_groups` lo aplica el servicio
+ * dentro de la consulta, y la identidad sale siempre de `request.auth`.
+ */
+export function groupRosterRoute(
+  app: FastifyInstance,
+  options: {
+    service: StudentsService;
+    config: Record<string, unknown>;
+    preHandler: RouteShorthandOptions['preHandler'];
+  },
+): void {
+  const idParams = z.object({ id: userIdSchema }).strict();
+  app.get(
+    '/groups/:id/roster',
+    { config: options.config, preHandler: options.preHandler },
+    async (request, reply) => {
+      const p = idParams.safeParse(request.params);
+      if (!p.success || Object.keys((request.query as object) ?? {}).length > 0)
+        return reply.code(400).send(errorBody('VALIDATION_ERROR', 'Datos no válidos', request.id));
+      const result = await options.service.getGroupRoster(context(request), p.data.id);
+      return result.ok
+        ? reply.code(200).send(result.value)
+        : reply
+            .code(STATUS[result.code])
+            .send(errorBody(result.reason ?? result.code, result.message, request.id));
+    },
+  );
 }

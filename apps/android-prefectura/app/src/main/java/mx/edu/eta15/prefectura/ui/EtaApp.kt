@@ -23,11 +23,13 @@ import mx.edu.eta15.prefectura.AppContainer
 import mx.edu.eta15.prefectura.R
 import mx.edu.eta15.prefectura.StorageState
 import mx.edu.eta15.prefectura.domain.AttendanceRepository
+import mx.edu.eta15.prefectura.mobile.MobileFeature
 
 object Routes {
     const val HOME = "home"
     const val GROUPS = "groups"
     const val CONNECTIVITY = "connectivity"
+    const val MOBILE = "mobile"
     const val ROSTER = "roster/{groupId}"
     const val CAPTURE = "capture/{groupId}"
     const val SUMMARY = "summary/{groupId}"
@@ -78,6 +80,7 @@ private fun EtaNavHost(
                     state = state,
                     onGroups = { navController.navigate(Routes.GROUPS) },
                     onConnectivity = { navController.navigate(Routes.CONNECTIVITY) },
+                    onMobile = { navController.navigate(Routes.MOBILE) },
                     contentPadding = padding,
                 )
             }
@@ -133,6 +136,10 @@ private fun EtaNavHost(
             EtaScaffold(title = stringResource(R.string.summary_title), onBack = { navController.popBackStack() }) { padding ->
                 SummaryScreen(state, onContinue = { navController.popBackStack() }, contentPadding = padding)
             }
+        }
+        // Vinculacion experimental con el servidor de pruebas: solo existe en debug (en release la ruta no se registra).
+        if (MobileFeature.AVAILABLE) {
+            composable(Routes.MOBILE) { MobileFeature.Screen(onBack = { navController.popBackStack() }) }
         }
         composable(Routes.CONNECTIVITY) {
             val vm: ConnectivityViewModel = viewModel(factory = factory { ConnectivityViewModel(container.networkMonitor, encryption) })

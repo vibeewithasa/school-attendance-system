@@ -166,7 +166,21 @@ La pantalla "No se pudo abrir el almacenamiento protegido" explica la causa en e
 
 Hay: **base cifrada en reposo (SQLCipher) con clave en Keystore**; `allowBackup=false` + reglas de `fullBackupContent` y `dataExtractionRules` que excluyen **todos** los dominios en copia en la nube y transferencia entre dispositivos; clave y blob en `noBackupFilesDir`; `usesCleartextTraffic=false` (HTTPS obligatorio en release); release **sin permiso INTERNET**; HTTP solo en debug y solo hacia `10.0.2.2`; `FLAG_SECURE` en release; sin credenciales, tokens ni claves literales en código o recursos (pruebas automáticas, incluida la ausencia de cadenas hexadecimales largas y de llamadas de registro); sin `fallbackToDestructiveMigration`; sin firma ni llaves en el repositorio; logs del proceso sin secretos ni nombres.
 
-**Falta (a diseñar antes de datos reales)**: autenticación del dispositivo y de la persona, exigir PIN/huella a la clave, sesiones móviles, revocación y borrado remoto, caducidad del paquete offline, procedimiento de pérdida/robo, actualización forzada, verificación de dependencias y aviso de terceros del binario nativo. Diseño propuesto y comparación de opciones: [ADR 0005](../decisions/0005-android-autenticacion-movil.md).
+**Etapa 2B (prototipo aislado, solo debug)**: vinculación experimental del dispositivo con el servidor de PRUEBAS (ver la sección siguiente). El APK de release no cambia: sin `INTERNET`, sin cliente de red y sin código de claves de dispositivo (pruebas automáticas y verificación del manifiesto y del dex).
+
+**Falta (a diseñar antes de datos reales)**: aprobación institucional de la autenticación del dispositivo y de la persona, exigir PIN/huella a la clave, atestación, borrado remoto, caducidad del paquete offline, procedimiento de pérdida/robo, actualización forzada, verificación de dependencias y aviso de terceros del binario nativo. Diseño propuesto y comparación de opciones: [ADR 0005](../decisions/0005-android-autenticacion-movil.md).
+
+## Vinculación experimental de dispositivo (etapa 2B, solo debug)
+
+Pantalla «Vincular dispositivo (entorno de pruebas)» en Inicio, con el aviso **ENTORNO DE PRUEBAS** y separada de la demostración local. Código en `src/debug/java/.../mobile/` (en `src/release` solo hay un objeto `MobileFeature` vacío con `AVAILABLE = false`):
+
+- `Dpop.kt` (Kotlin puro, probado en la JVM con vectores calculados por el servidor): JWK, huella RFC 7638, huella corta, conversión DER → P1363 y pruebas DPoP ES256.
+- `DeviceKey.kt`: par EC P-256 en Android Keystore (solo firma, no exportable). Solo se crea al pulsar «Vincular»; si ya existe se reutiliza y **nunca se regenera en silencio**. Informa el nivel de protección real (StrongBox, entorno seguro o software; en el emulador: software).
+- `HttpMobileApi.kt`: `HttpURLConnection` hacia `http://10.0.2.2:3000` (único destino HTTP permitido en debug), sin cookies, credencial en `Authorization: DPoP` + prueba, sin redirecciones, respuestas con límite de tamaño.
+- `MobileLinkController.kt`: estados No vinculado → Emparejamiento (clave de solicitud, código y huella en pantalla; sondeo) → Vinculado (titular, huella, protección, sesión en memoria, lectura en línea de grupos y padrón) y Clave perdida; «Olvidar» borra clave y registro (no revoca en el servidor: lo hace Dirección en el portal).
+- `LinkStore.kt`: solo identificadores y etiqueta en `noBackupFilesDir`; la sesión nunca se guarda y los datos escolares leídos no se almacenan en Room.
+
+Pruebas: 64 JVM de debug (10 DPoP, 13 máquina de estados, 17 de política) y 41 de release; 75 instrumentadas (7 del Keystore real: creación explícita, no reemplazo, formato del JWK, firma verificada, borrado, clave no exportable; 5 de interfaz con servidor falso) y una prueba de extremo a extremo (`SandboxE2eTest`, solo con `-e e2e sandbox`) contra `pnpm dev:sandbox -- --catalog-write --students-write --prefect-write --attendance-write --seed-attendance --mobile-auth`. No hay envío de asistencia, sincronización ni cola.
 
 ## Compilar, ejecutar y probar (PowerShell)
 
@@ -210,4 +224,4 @@ Limitaciones de esta verificación: un solo emulador (x86_64, API 36); no se pro
 
 ## Pendientes (no implementados a propósito)
 
-Autenticación real y registro de dispositivos; exigir PIN/huella a la clave; descarga de grupos autorizados y del padrón; sincronización y resolución de conflictos; finalización oficial; verificación de dependencias de Gradle y aviso de terceros del binario nativo; firma release y distribución del APK; logotipo oficial; calendario no lectivo; reglas de captura tardía y correcciones (decisiones institucionales en [diseno-asistencia-diaria.md](diseno-asistencia-diaria.md)).
+Aprobación de la autenticación móvil (ADR 0005, hoy prototipo aislado) y su paso a producción; exigir PIN/huella a la clave y atestación; descarga de grupos autorizados y del padrón; sincronización y resolución de conflictos; finalización oficial; verificación de dependencias de Gradle y aviso de terceros del binario nativo; firma release y distribución del APK; logotipo oficial; calendario no lectivo; reglas de captura tardía y correcciones (decisiones institucionales en [diseno-asistencia-diaria.md](diseno-asistencia-diaria.md)).

@@ -10,6 +10,7 @@ import { NotFoundPage } from '../features/home/NotFoundPage';
 import { PersonalPage } from '../features/personal/PersonalPage';
 import { AttendanceDayPage } from '../features/asistencia/AttendanceDayPage';
 import { AttendancePage } from '../features/asistencia/AttendancePage';
+import { MobileDevicesPage } from '../features/dispositivos/MobileDevicesPage';
 import { PrefectAssignmentsPage } from '../features/prefectura/PrefectAssignmentsPage';
 
 export function App() {
@@ -24,6 +25,7 @@ export function App() {
           <Route path="catalogo" element={<CatalogPage />} />
           <Route path="alumnos" element={<StudentsPage />} />
           <Route path="prefectura" element={<PrefectAssignmentsPage />} />
+          <Route path="dispositivos" element={<MobileDevicesPage />} />
           <Route path="asistencia" element={<AttendancePage />} />
           <Route path="asistencia/:dayId" element={<AttendanceDayPage />} />
         </Route>

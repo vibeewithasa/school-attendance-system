@@ -17,7 +17,10 @@ import { authRoutes } from './auth.routes.js';
 import { createAuthGuards } from './guards.js';
 import { schoolCatalogRoutes } from '../school-catalog/school-catalog.routes.js';
 import { createSchoolCatalogService } from '../school-catalog/school-catalog.service.js';
-import { prefectAssignmentsRoutes } from '../prefect-assignments/prefect-assignments.routes.js';
+import {
+  myGroupsRoute,
+  prefectAssignmentsRoutes,
+} from '../prefect-assignments/prefect-assignments.routes.js';
 import {
   createPrefectAssignmentsService,
   lockGroupAccess,
@@ -25,12 +28,20 @@ import {
 } from '../prefect-assignments/prefect-assignments.service.js';
 import { attendanceRoutes } from '../attendance/attendance.routes.js';
 import { createAttendanceService } from '../attendance/attendance.service.js';
-import { studentsRoutes } from '../students/students.routes.js';
+import { groupRosterRoute, studentsRoutes } from '../students/students.routes.js';
 import { createStudentsService } from '../students/students.service.js';
 import { activationAdminRoutes, activationPublicRoutes } from '../activation/activation.routes.js';
 import { createActivationService } from '../activation/activation.service.js';
 import { checkRequestOrigin, isUnsafeMethod, parseAllowedOrigins } from './csrf.js';
 import { createPasswordService, type PasswordService } from './password.js';
+import {
+  SANDBOX_MOBILE_DEFAULTS,
+  createMobileAuthService,
+  type MobileAuthConfig,
+} from '../mobile-auth/mobile-auth.service.js';
+import { createMobileGuards } from '../mobile-auth/mobile-guards.js';
+import { mobileRoutes } from '../mobile-auth/mobile-auth.routes.js';
+import { mobileDevicesRoutes } from '../mobile-auth/mobile-devices.routes.js';
 import { createSessionService, type SessionService, type SessionStore } from './session-service.js';
 
 export interface AuthModuleOptions {
@@ -41,7 +52,42 @@ export interface AuthModuleOptions {
   limits?: Partial<AuthLimits>;
   /** SOLO PRUEBAS: "hoy" escolar (YYYY-MM-DD) de la asistencia. En produccion lo calcula la base (America/Mazatlan). */
   schoolToday?: () => string;
+  /**
+   * AUTENTICACION MOVIL AISLADA (prototipo de sandbox; ADR 0005 propuesto, no aceptado). Sin esta opcion no existe NINGUNA ruta
+   * /mobile ni /mobile-devices. Se rechaza con NODE_ENV=production.
+   */
+  mobile?: MobileAuthModuleOptions;
 }
+
+export interface MobileAuthModuleOptions {
+  /** Base canonica de las URL para el htu de DPoP (p. ej. http://10.0.2.2:3000 para el emulador). Obligatoria. */
+  publicBaseUrl: string;
+  /** Tiempos de ENSAYO (ver SANDBOX_MOBILE_DEFAULTS); no son politica institucional. */
+  config?: Partial<Omit<MobileAuthConfig, 'publicBaseUrl'>>;
+  /** Reloj inyectable (pruebas). */
+  clock?: () => Date;
+  limits?: Partial<MobileLimits>;
+}
+
+export interface MobileLimits {
+  /** Solicitudes de vinculacion por IP y ventana. */
+  enrollIp: number;
+  /** Nonces pedidos por IP y ventana. */
+  challengeIp: number;
+  /** Fallos de credenciales moviles por IP y por clave de dispositivo. */
+  tokenFailIp: number;
+  tokenFailKey: number;
+  /** Reclamos fallidos por cuenta. */
+  claimFailUser: number;
+}
+
+export const DEFAULT_MOBILE_LIMITS: MobileLimits = {
+  enrollIp: 10,
+  challengeIp: 120,
+  tokenFailIp: 30,
+  tokenFailKey: 10,
+  claimFailUser: 10,
+};
 
 export interface AuthLimits {
   /** Ventana de los contadores de fallos (ms). */
@@ -82,6 +128,9 @@ export async function registerHttpSecurity(app: FastifyInstance, env: Env): Prom
   const allowed = parseAllowedOrigins(env.CORS_ORIGIN);
   app.addHook('onRequest', async (request, reply) => {
     if (!isUnsafeMethod(request.method)) return;
+    // Canal movil: sin cookies ni credenciales ambientales (token + prueba DPoP por peticion) y rechaza cualquier Origin
+    // en su propio guarda, de modo que un navegador no puede usarlo. Es una exencion por RUTA, no global.
+    if (request.routeOptions?.config?.mobileChannel === true) return;
     const verdict = checkRequestOrigin(request.headers, allowed);
     if (verdict === 'ok') return;
     request.log.warn({ verdict }, 'peticion rechazada por origen');
@@ -236,5 +285,107 @@ export async function registerAuth(
     },
     { prefix: '/school' },
   );
+  if (options.mobile) {
+    if (env.NODE_ENV === 'production')
+      throw new Error('La autenticacion movil de sandbox no se habilita con NODE_ENV=production');
+    await registerMobile(app, env, options.mobile, {
+      store: options.store,
+      guards,
+      limits,
+      limiter,
+    });
+  }
   return { sessions };
+}
+
+async function registerMobile(
+  app: FastifyInstance,
+  env: Env,
+  mobile: MobileAuthModuleOptions,
+  deps: {
+    store: SessionStore;
+    guards: ReturnType<typeof createAuthGuards>;
+    limits: AuthLimits;
+    limiter: (max: number) => ReturnType<typeof createAttemptLimiter>;
+  },
+): Promise<void> {
+  const { store, guards, limits, limiter } = deps;
+  const config: MobileAuthConfig = {
+    ...SANDBOX_MOBILE_DEFAULTS,
+    ...mobile.config,
+    publicBaseUrl: mobile.publicBaseUrl.replace(/\/+$/, ''),
+  };
+  if (!/^https?:\/\/[^/\s]+$/.test(config.publicBaseUrl))
+    throw new Error('publicBaseUrl debe ser esquema + host (+ puerto), sin ruta');
+  if (
+    config.accessTtlSeconds > config.absoluteTtlSeconds ||
+    config.idleTtlSeconds > config.absoluteTtlSeconds
+  )
+    throw new Error('Los tiempos moviles deben cumplir acceso e inactividad <= duracion absoluta');
+  // La fila de una prueba/nonce vive como maximo 15 minutos (CHECK de la base): la ventana de aceptacion debe caber.
+  if (config.proofSkewSeconds * 2 + 5 > 900 || config.nonceTtlSeconds > 900)
+    throw new Error('La tolerancia de reloj y la vida del nonce deben caber en 15 minutos');
+  if (config.maxProofsPerKey < 1 || config.maxNoncesPerKey < 1 || config.maxPendingPerIp < 1)
+    throw new Error('Los cupos moviles deben ser positivos');
+  const mLimits = { ...DEFAULT_MOBILE_LIMITS, ...mobile.limits };
+  // La proteccion anti-replay y los nonces son estado COMPARTIDO en PostgreSQL (tablas de la 0011), no memoria del proceso.
+  const service = createMobileAuthService({ store, config, clock: mobile.clock });
+  const mobileGuards = createMobileGuards({ service, config, clock: mobile.clock });
+  const mfaDeferredAllowed =
+    env.AUTH_MFA_ENFORCEMENT === 'deferred' && env.NODE_ENV !== 'production';
+
+  // Canal MOVIL (sin cookies): enrolamiento de dispositivos y sesiones DPoP.
+  await app.register(
+    async (scope) => {
+      mobileRoutes(scope, {
+        service,
+        guards: mobileGuards,
+        config,
+        limiters: {
+          enrollIp: limiter(mLimits.enrollIp),
+          challengeIp: limiter(mLimits.challengeIp),
+          tokenFailIp: limiter(mLimits.tokenFailIp),
+          tokenFailKey: limiter(mLimits.tokenFailKey),
+        },
+        floodLimit: limits.floodOther,
+      });
+    },
+    { prefix: '/mobile' },
+  );
+  // Lecturas escolares por el canal movil: los MISMOS handlers y servicios que el portal, con autenticacion movil. Solo estas dos
+  // rutas existen aqui; ninguna administrativa.
+  await app.register(
+    async (scope) => {
+      scope.addHook('onSend', (_request, reply, payload, done) => {
+        reply.header('Cache-Control', 'no-store');
+        done(null, payload);
+      });
+      const route = {
+        config: {
+          mobileChannel: true,
+          rateLimit: { max: limits.floodOther, timeWindow: '1 minute' },
+        },
+        preHandler: [mobileGuards.channelGuard, mobileGuards.accessGuard],
+      };
+      myGroupsRoute(scope, { service: createPrefectAssignmentsService({ store }), ...route });
+      groupRosterRoute(scope, {
+        service: createStudentsService({ store, assignments: pgGroupAssignments }),
+        ...route,
+      });
+    },
+    { prefix: '/mobile/school' },
+  );
+  // Canal WEB (cookie + CSRF + Origin): la persona titular reclama y la autoridad aprueba y revoca.
+  await app.register(
+    async (scope) => {
+      mobileDevicesRoutes(scope, {
+        service,
+        guards,
+        mfaDeferredAllowed,
+        claimLimiter: limiter(mLimits.claimFailUser),
+        floodLimit: limits.floodOther,
+      });
+    },
+    { prefix: '/mobile-devices' },
+  );
 }

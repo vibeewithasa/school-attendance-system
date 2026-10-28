@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SOLO debug. Vinculacion experimental del dispositivo (ADR 0005 en estado "propuesta"). Sin datos reales. -->
+<resources>
+    <string name="mobile_home_button">Vincular dispositivo (entorno de pruebas)</string>
+    <string name="mobile_title">Vincular dispositivo</string>
+    <string name="mobile_banner_title">ENTORNO DE PRUEBAS</string>
+    <string name="mobile_banner_detail">Vinculación experimental con el servidor de pruebas del equipo anfitrión. No es el sistema de la escuela, no se aprobó para uso real y solo debe usarse con cuentas y datos ficticios.</string>
+    <string name="mobile_separate_notice">Esto es independiente de la demostración local: las capturas locales no se envían ni se leen de este servidor.</string>
+
+    <string name="mobile_loading">Revisando el estado de este dispositivo…</string>
+
+    <!-- No vinculado -->
+    <string name="mobile_unlinked_title">Este dispositivo no está vinculado</string>
+    <string name="mobile_unlinked_detail">Al vincular se crea una clave que nunca sale de este dispositivo. Después, una persona con autoridad en el portal debe aprobar la vinculación comparando la huella.</string>
+    <string name="mobile_label_field">Nombre del dispositivo</string>
+    <string name="mobile_start">Vincular este dispositivo</string>
+    <string name="mobile_key_present">Ya existe una clave de este dispositivo; se reutilizará.</string>
+
+    <!-- Emparejamiento -->
+    <string name="mobile_pairing_title">Falta completar la vinculación</string>
+    <string name="mobile_pairing_steps">1. Abre el portal en la sección «Dispositivos móviles» con tu cuenta.\n2. Escribe la clave de solicitud y el código que aparecen abajo.\n3. Pide a Dirección que apruebe comparando la huella de este dispositivo.</string>
+    <string name="mobile_request_label">Clave de solicitud</string>
+    <string name="mobile_code_label">Código de emparejamiento</string>
+    <string name="mobile_code_lost">El código solo se muestra al iniciar. Cancela y vuelve a vincular para obtener uno nuevo.</string>
+    <string name="mobile_fingerprint_label">Huella de este dispositivo</string>
+    <string name="mobile_status_pending">Esperando que lo escribas en el portal.</string>
+    <string name="mobile_status_claimed">Reclamada por %1$s. Esperando la aprobación de Dirección.</string>
+    <string name="mobile_status_claimed_unknown">Reclamada. Esperando la aprobación de Dirección.</string>
+    <string name="mobile_status_approved">Aprobada. Activando este dispositivo…</string>
+    <string name="mobile_cancel">Cancelar vinculación</string>
+
+    <!-- Vinculado -->
+    <string name="mobile_linked_title">Dispositivo vinculado</string>
+    <string name="mobile_owner">Titular: %1$s</string>
+    <string name="mobile_owner_unknown">Titular: no disponible</string>
+    <string name="mobile_device_label">Dispositivo: %1$s</string>
+    <string name="mobile_device_id">Identificador: %1$s</string>
+    <string name="mobile_protection_strongbox">Clave protegida por un chip de seguridad dedicado (StrongBox).</string>
+    <string name="mobile_protection_tee">Clave protegida por el entorno seguro del equipo.</string>
+    <string name="mobile_protection_software">Clave protegida solo por software (no hay entorno seguro en este equipo).</string>
+    <string name="mobile_protection_unknown">No se pudo determinar la protección de la clave.</string>
+    <string name="mobile_session_none">Sesión: sin abrir</string>
+    <string name="mobile_session_open">Sesión abierta. El acceso se renueva solo; termina como máximo el %1$s.</string>
+    <string name="mobile_open_session">Abrir sesión</string>
+    <string name="mobile_close_session">Cerrar sesión</string>
+    <string name="mobile_load_groups">Leer mis grupos (en línea)</string>
+    <string name="mobile_groups_title">Mis grupos (lectura en línea)</string>
+    <string name="mobile_groups_empty">No tienes grupos asignados en este momento.</string>
+    <string name="mobile_roster_title">Alumnos de %1$s</string>
+    <string name="mobile_roster_empty">Este grupo no tiene alumnos vigentes.</string>
+    <string name="mobile_roster_close">Cerrar lista</string>
+    <string name="mobile_readonly_notice">Lectura de prueba con datos ficticios. No se guarda en este dispositivo, no se pasa lista y no hay envío ni sincronización.</string>
+
+    <!-- Olvidar -->
+    <string name="mobile_forget">Olvidar este dispositivo</string>
+    <string name="mobile_forget_title">¿Olvidar este dispositivo?</string>
+    <string name="mobile_forget_text">Se borra la clave y la vinculación guardadas aquí. No se revoca nada en el servidor: pide a Dirección que revoque el dispositivo desde el portal. Para volver a usarlo habrá que vincularlo de nuevo con una clave nueva.</string>
+    <string name="mobile_forget_yes">Olvidar</string>
+    <string name="mobile_key_lost_title">Falta la clave de este dispositivo</string>
+    <string name="mobile_key_lost_detail">Hay una vinculación guardada, pero Android ya no tiene la clave (por ejemplo, tras restablecer las credenciales del equipo). No se crea otra clave sola: olvida la vinculación y vincula de nuevo; Dirección debe revocar la anterior.</string>
+
+    <!-- Avisos -->
+    <string name="mobile_issue_network">No se pudo conectar con el servidor de pruebas. ¿Está encendido en el equipo anfitrión?</string>
+    <string name="mobile_issue_unavailable">El servidor de pruebas no tiene habilitada la vinculación de dispositivos.</string>
+    <string name="mobile_issue_rate">Demasiados intentos. Espera unos minutos.</string>
+    <string name="mobile_issue_expired">La solicitud venció. Vuelve a vincular.</string>
+    <string name="mobile_issue_closed">La solicitud fue rechazada o cancelada. Puedes volver a intentarlo.</string>
+    <string name="mobile_issue_key_registered">Esta clave ya fue registrada antes. Olvida este dispositivo para generar una clave nueva.</string>
+    <string name="mobile_issue_not_eligible">La cuenta ya no puede usar dispositivos móviles. Consulta a Dirección.</string>
+    <string name="mobile_issue_revoked">Dirección revocó este dispositivo. Olvídalo y vincula de nuevo si corresponde.</string>
+    <string name="mobile_issue_session_ended">La sesión terminó. Ábrela de nuevo.</string>
+    <string name="mobile_issue_key">No se pudo usar la clave de este dispositivo.</string>
+    <string name="mobile_issue_unexpected">Ocurrió un problema inesperado. Inténtalo de nuevo.</string>
+</resources>

@@ -39,13 +39,20 @@ import mx.edu.eta15.prefectura.dev.DevHealthCheck
 import mx.edu.eta15.prefectura.dev.HealthResult
 import mx.edu.eta15.prefectura.domain.Group
 import mx.edu.eta15.prefectura.domain.Student
+import mx.edu.eta15.prefectura.mobile.MobileFeature
 
 private val ScreenPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
 
 // ============================== Inicio ==============================
 
 @Composable
-fun HomeScreen(state: HomeUiState, onGroups: () -> Unit, onConnectivity: () -> Unit, contentPadding: PaddingValues) {
+fun HomeScreen(
+    state: HomeUiState,
+    onGroups: () -> Unit,
+    onConnectivity: () -> Unit,
+    contentPadding: PaddingValues,
+    onMobile: () -> Unit = {},
+) {
     Column(
         Modifier
             .padding(contentPadding)
@@ -96,6 +103,7 @@ fun HomeScreen(state: HomeUiState, onGroups: () -> Unit, onConnectivity: () -> U
                 .heightIn(min = 56.dp)
                 .testTag("home-connectivity"),
         ) { Text(stringResource(R.string.home_button_connectivity)) }
+        if (MobileFeature.AVAILABLE) MobileFeature.HomeEntry(onMobile)
     }
 }
 

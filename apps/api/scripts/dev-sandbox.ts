@@ -15,7 +15,12 @@ import { createPasswordService } from '../src/modules/auth/password.js';
 import { createPgSessionStore } from '../src/modules/auth/session-store-pg.js';
 import { startApiCluster } from '../test/helpers/api-cluster.js';
 
-const newPassword = () => `Sbx-${randomBytes(12).toString('base64url')}`;
+// Para pruebas automatizadas de extremo a extremo (emulador + guiones) sin imprimir nada: SANDBOX_PASSWORD, definida por quien
+// lanza el entorno SOLO en su proceso, sustituye a las contrasenas aleatorias de las cuentas ficticias de ESTE arranque.
+const fixedPassword = process.env.SANDBOX_PASSWORD;
+if (fixedPassword !== undefined && fixedPassword.length < 20)
+  throw new Error('SANDBOX_PASSWORD debe tener al menos 20 caracteres');
+const newPassword = () => fixedPassword ?? `Sbx-${randomBytes(12).toString('base64url')}`;
 
 async function main(): Promise<void> {
   console.log('Iniciando el entorno aislado (clúster PostgreSQL desechable)…');
@@ -38,11 +43,22 @@ async function main(): Promise<void> {
     throw new Error(
       '--seed-attendance requiere --catalog-write --students-write --prefect-write --attendance-write',
     );
+  // --mobile-auth aplica la propuesta 0006 (autenticacion movil AISLADA, ADR 0005 "propuesta") SOLO en este clúster y habilita
+  // /mobile/* y /mobile-devices/* para un emulador Android (10.0.2.2 es el loopback de ESTA maquina). Exige los datos ficticios.
+  const mobileAuth = process.argv.includes('--mobile-auth');
+  if (
+    mobileAuth &&
+    !(seedAttendance && catalogWrite && studentsWrite && prefectWrite && attendanceWrite)
+  )
+    throw new Error(
+      '--mobile-auth requiere --catalog-write --students-write --prefect-write --attendance-write --seed-attendance',
+    );
   const cluster = await startApiCluster(10, {
     catalogWrite,
     studentsWrite,
     prefectWrite,
     attendanceWrite,
+    mobileWrite: mobileAuth,
   });
   // Aislamiento: el clúster desechable usa un puerto propio; jamas el del servicio de PostgreSQL de Windows (5432).
   if (cluster.pgt.port === 5432) {
@@ -206,8 +222,15 @@ async function main(): Promise<void> {
       store: createPgSessionStore(cluster.pool),
       passwords,
       ...(schoolTodayArg ? { schoolToday: () => schoolTodayArg } : {}),
+      // La URL publica canonica del canal movil (la que firma el dispositivo en `htu`) NO sale de cabeceras: 10.0.2.2 es como el
+      // emulador ve el loopback de esta maquina; la API sigue escuchando solo en 127.0.0.1.
+      ...(mobileAuth ? { mobile: { publicBaseUrl: 'http://10.0.2.2:3000' } } : {}),
     },
   });
+  if (mobileAuth)
+    console.log(
+      'AVISO: autenticacion movil de PRUEBA habilitada (propuesta 0006 solo en este clúster desechable; ADR 0005 sigue como "propuesta").',
+    );
   if (schoolTodayArg)
     console.log(
       `AVISO: el "hoy" escolar de la asistencia esta fijado a ${schoolTodayArg} (solo este entorno desechable).`,

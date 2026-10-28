@@ -75,6 +75,11 @@ export function Layout() {
                 Asignaciones de prefectura
               </NavLink>
             )}
+            {(permissionsOf(me).canEnrollMobile || permissionsOf(me).canManageMobile) && (
+              <NavLink to="/dispositivos" className={navClass}>
+                Dispositivos móviles
+              </NavLink>
+            )}
             {permissionsOf(me).canViewCatalog && (
               <NavLink to="/catalogo" className={navClass}>
                 Catálogo escolar
