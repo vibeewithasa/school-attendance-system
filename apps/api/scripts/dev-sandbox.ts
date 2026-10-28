@@ -53,6 +53,11 @@ async function main(): Promise<void> {
     throw new Error(
       '--mobile-auth requiere --catalog-write --students-write --prefect-write --attendance-write --seed-attendance',
     );
+  // --mobile-attendance-read habilita ademas la LECTURA de asistencia por el canal movil (ADR 0006, propuesto): solo GET
+  // /mobile/school/attendance/{today,days,days/:id}. Nunca escribe asistencia. Exige --mobile-auth.
+  const mobileAttendanceRead = process.argv.includes('--mobile-attendance-read');
+  if (mobileAttendanceRead && !mobileAuth)
+    throw new Error('--mobile-attendance-read requiere --mobile-auth (y sus indicadores)');
   const cluster = await startApiCluster(10, {
     catalogWrite,
     studentsWrite,
@@ -224,12 +229,23 @@ async function main(): Promise<void> {
       ...(schoolTodayArg ? { schoolToday: () => schoolTodayArg } : {}),
       // La URL publica canonica del canal movil (la que firma el dispositivo en `htu`) NO sale de cabeceras: 10.0.2.2 es como el
       // emulador ve el loopback de esta maquina; la API sigue escuchando solo en 127.0.0.1.
-      ...(mobileAuth ? { mobile: { publicBaseUrl: 'http://10.0.2.2:3000' } } : {}),
+      ...(mobileAuth
+        ? {
+            mobile: {
+              publicBaseUrl: 'http://10.0.2.2:3000',
+              ...(mobileAttendanceRead ? { attendanceRead: true } : {}),
+            },
+          }
+        : {}),
     },
   });
   if (mobileAuth)
     console.log(
       'AVISO: autenticacion movil de PRUEBA habilitada (propuesta 0006 solo en este clúster desechable; ADR 0005 sigue como "propuesta").',
+    );
+  if (mobileAttendanceRead)
+    console.log(
+      'AVISO: lectura MOVIL de asistencia habilitada (solo GET; sin escritura; ADR 0006 sigue como "propuesta").',
     );
   if (schoolTodayArg)
     console.log(

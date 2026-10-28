@@ -27,7 +27,11 @@ import {
   pgGroupAssignments,
 } from '../prefect-assignments/prefect-assignments.service.js';
 import { attendanceRoutes } from '../attendance/attendance.routes.js';
-import { createAttendanceService } from '../attendance/attendance.service.js';
+import { mobileAttendanceRoutes } from '../attendance/attendance.mobile.js';
+import {
+  createAttendanceService,
+  type AttendanceService,
+} from '../attendance/attendance.service.js';
 import { groupRosterRoute, studentsRoutes } from '../students/students.routes.js';
 import { createStudentsService } from '../students/students.service.js';
 import { activationAdminRoutes, activationPublicRoutes } from '../activation/activation.routes.js';
@@ -36,6 +40,7 @@ import { checkRequestOrigin, isUnsafeMethod, parseAllowedOrigins } from './csrf.
 import { createPasswordService, type PasswordService } from './password.js';
 import {
   SANDBOX_MOBILE_DEFAULTS,
+  coarseIp,
   createMobileAuthService,
   type MobileAuthConfig,
 } from '../mobile-auth/mobile-auth.service.js';
@@ -67,6 +72,11 @@ export interface MobileAuthModuleOptions {
   /** Reloj inyectable (pruebas). */
   clock?: () => Date;
   limits?: Partial<MobileLimits>;
+  /**
+   * LECTURA de asistencia por el canal movil (ADR 0006, propuesto): rutas GET /mobile/school/attendance/{today,days,days/:id}.
+   * Apagado por omision. Solo sandbox: hereda la prohibicion de NODE_ENV=production de `mobile` y la repite aqui.
+   */
+  attendanceRead?: boolean;
 }
 
 export interface MobileLimits {
@@ -251,6 +261,14 @@ export async function registerAuth(
     { prefix: '/catalog' },
   );
   // Alumnos, matriculas e historial de grupo (datos de menores): permisos students:* / enrollments:manage con alcance (ver students.service.ts).
+  // UN solo servicio de asistencia: el portal (/school/attendance) y la lectura movil (/mobile/school/attendance, solo sandbox y solo
+  // con `mobile.attendanceRead`) comparten reglas de alcance, fecha y revision; no hay una segunda implementacion.
+  const attendanceService = createAttendanceService({
+    store: options.store,
+    assignments: pgGroupAssignments,
+    lockGroupAccess,
+    today: options.schoolToday,
+  });
   await app.register(
     async (scope) => {
       studentsRoutes(scope, {
@@ -271,12 +289,7 @@ export async function registerAuth(
       });
       // Asistencia diaria (una lista por grupo y fecha): captura la prefectura de sus grupos, Direccion supervisa (ver attendance.service.ts).
       attendanceRoutes(scope, {
-        service: createAttendanceService({
-          store: options.store,
-          assignments: pgGroupAssignments,
-          lockGroupAccess,
-          today: options.schoolToday,
-        }),
+        service: attendanceService,
         guards,
         mfaDeferredAllowed:
           env.AUTH_MFA_ENFORCEMENT === 'deferred' && env.NODE_ENV !== 'production',
@@ -293,6 +306,7 @@ export async function registerAuth(
       guards,
       limits,
       limiter,
+      attendance: attendanceService,
     });
   }
   return { sessions };
@@ -307,13 +321,19 @@ async function registerMobile(
     guards: ReturnType<typeof createAuthGuards>;
     limits: AuthLimits;
     limiter: (max: number) => ReturnType<typeof createAttemptLimiter>;
+    /** El MISMO servicio de asistencia del portal (mismas reglas de alcance, fecha y revision). */
+    attendance: AttendanceService;
   },
 ): Promise<void> {
   const { store, guards, limits, limiter } = deps;
+  if (mobile.attendanceRead && env.NODE_ENV === 'production')
+    throw new Error('La lectura movil de asistencia no se habilita con NODE_ENV=production');
   const config: MobileAuthConfig = {
     ...SANDBOX_MOBILE_DEFAULTS,
     ...mobile.config,
     publicBaseUrl: mobile.publicBaseUrl.replace(/\/+$/, ''),
+    // Una sola fuente: el interruptor explicito. `mobile.config` no puede encenderlo por la puerta de atras.
+    attendanceRead: mobile.attendanceRead === true,
   };
   const mLimits = { ...DEFAULT_MOBILE_LIMITS, ...mobile.limits };
   // Los limites de solicitudes por IP y de reclamos fallidos por cuenta son COMPARTIDOS: los aplica el servicio con PostgreSQL.
@@ -375,6 +395,18 @@ async function registerMobile(
         service: createStudentsService({ store, assignments: pgGroupAssignments }),
         ...route,
       });
+      // LECTURA de asistencia (ADR 0006, propuesto): solo con el interruptor explicito; sin el, estas rutas NO existen (404).
+      if (config.attendanceRead) {
+        void scope.register(
+          async (attendanceScope) =>
+            mobileAttendanceRoutes(
+              attendanceScope,
+              { service: deps.attendance, config: route.config, preHandler: route.preHandler },
+              coarseIp,
+            ),
+          { prefix: '/attendance' },
+        );
+      }
     },
     { prefix: '/mobile/school' },
   );
