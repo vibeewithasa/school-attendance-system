@@ -54,6 +54,12 @@ export interface MobileAuthConfig {
   /** Reclamos fallidos de UNA cuenta autenticada por ventana (contados en el registro de auditoria: compartidos entre instancias). */
   maxClaimFailuresPerUser: number;
   claimFailureWindowSeconds: number;
+  /**
+   * LECTURA de asistencia por el canal movil (ADR 0006, propuesto). Apagado por omision. Con `true` el token movil incluye
+   * `attendance:read` SOLO con alcance `assigned_groups` (nunca `all`, nunca `attendance:capture`). Solo se configura desde
+   * `registerMobile`, que ya no existe con NODE_ENV=production.
+   */
+  attendanceRead?: boolean;
 }
 
 /** Valores de ENSAYO del sandbox (no son politica institucional; ver ADR 0005). */
@@ -80,6 +86,9 @@ export const MOBILE_ALLOWED_PERMISSIONS: ReadonlySet<string> = new Set([
   'prefect_assignments:read',
   'students:read_basic',
 ]);
+
+/** Permiso de lectura de asistencia que el token movil puede ejercer cuando `MobileAuthConfig.attendanceRead` esta activo. */
+export const MOBILE_ATTENDANCE_READ_PERMISSION = 'attendance:read';
 
 export type MobileFailure =
   | 'FORBIDDEN'
@@ -1285,7 +1294,13 @@ export function createMobileAuthService(options: MobileAuthServiceOptions) {
             thumbprint,
             userId: s.user_id,
             roles: roles.rows.map((x) => x.key),
-            grants: grants.rows.filter((g) => MOBILE_ALLOWED_PERMISSIONS.has(g.permission)),
+            grants: grants.rows.filter(
+              (g) =>
+                MOBILE_ALLOWED_PERMISSIONS.has(g.permission) ||
+                (config.attendanceRead === true &&
+                  g.permission === MOBILE_ATTENDANCE_READ_PERMISSION &&
+                  g.scope === 'assigned_groups'),
+            ),
             createdAt: s.created_at,
             accessExpiresAt: s.access_expires_at,
             idleExpiresAt: s.idle_expires_at,

@@ -67,6 +67,14 @@ export interface AttendanceContext {
   ip?: string | null;
   userAgent?: string | null;
   requestId?: string | null;
+  /** Solo el canal movil de LECTURA: se anota en la auditoria para saber desde que dispositivo se consulto (nunca decide permisos). */
+  channel?: 'mobile';
+  deviceId?: string | null;
+}
+
+/** Opciones de las LECTURAS. `snapshot`: una sola foto consistente de la base (ver `beginSnapshot`). */
+export interface AttendanceReadOptions {
+  snapshot?: boolean;
 }
 
 export interface AttendanceServiceOptions {
@@ -171,8 +179,24 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
     recordAudit(
       tx,
       { actorId: ctx.actorId, ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId },
-      { type, outcome, details },
+      {
+        type,
+        outcome,
+        details: ctx.channel
+          ? { ...details, channel: ctx.channel, deviceId: ctx.deviceId ?? null }
+          : details,
+      },
     );
+
+  /**
+   * Lecturas consistentes: el detalle de una lista se arma con varias consultas (cabecera y conteos, renglones, comparacion del
+   * padron). En READ COMMITTED un guardado o una finalizacion que se confirme ENTRE ellas produciria una respuesta con conteos de
+   * una revision y renglones de otra. REPEATABLE READ fija UNA foto para toda la transaccion (solo lecturas y la auditoria, que no
+   * choca con nadie: no hay reintentos por 40001). Debe ser la PRIMERA sentencia de la transaccion.
+   */
+  const beginSnapshot = async (tx: SqlClient, options?: AttendanceReadOptions): Promise<void> => {
+    if (options?.snapshot) await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+  };
 
   async function denied(ctx: AttendanceContext, action: string): Promise<void> {
     await store
@@ -371,9 +395,13 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
 
   return {
     /** Los grupos de hoy de quien consulta, con el estado de su lista. Direccion (`all`): todos los grupos activos del ciclo. */
-    async today(ctx: AttendanceContext): Promise<AttendanceResult<AttendanceTodayResponse>> {
+    async today(
+      ctx: AttendanceContext,
+      readOptions?: AttendanceReadOptions,
+    ): Promise<AttendanceResult<AttendanceTodayResponse>> {
       return guard(async () => {
         const out = await store.transaction(async (tx) => {
+          await beginSnapshot(tx, readOptions);
           const today = await todayOf(tx);
           const read = await accessFor(tx, ctx, 'attendance:read', today);
           if (read.kind === 'denied') return 'forbidden' as const;
@@ -573,9 +601,11 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
     async list(
       ctx: AttendanceContext,
       query: ListAttendanceDaysQuery,
+      readOptions?: AttendanceReadOptions,
     ): Promise<AttendanceResult<AttendanceDayList>> {
       return guard(async () => {
         const out = await store.transaction(async (tx) => {
+          await beginSnapshot(tx, readOptions);
           const today = await todayOf(tx);
           const access = await accessFor(tx, ctx, 'attendance:read', today);
           if (access.kind === 'denied' || access.kind === 'own') return 'forbidden' as const;
@@ -628,9 +658,14 @@ export function createAttendanceService(options: AttendanceServiceOptions) {
       });
     },
 
-    async get(ctx: AttendanceContext, id: string): Promise<AttendanceResult<AttendanceDayDetail>> {
+    async get(
+      ctx: AttendanceContext,
+      id: string,
+      readOptions?: AttendanceReadOptions,
+    ): Promise<AttendanceResult<AttendanceDayDetail>> {
       return guard(async () => {
         const out = await store.transaction(async (tx) => {
+          await beginSnapshot(tx, readOptions);
           const today = await todayOf(tx);
           const access = await accessFor(tx, ctx, 'attendance:read', today);
           if (access.kind === 'denied' || access.kind === 'own') return 'forbidden' as const;

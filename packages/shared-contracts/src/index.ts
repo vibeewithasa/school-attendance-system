@@ -52,3 +52,4 @@ export * from './students.js';
 export * from './prefect-assignments.js';
 export * from './attendance.js';
 export * from './mobile-auth.js';
+export * from './mobile-attendance.js';

@@ -19,10 +19,31 @@ export interface AppDependencies {
   logStream?: { write(chunk: string): void };
 }
 
+/**
+ * Los valores de la cadena de consulta NO se registran: ningun cliente legitimo pone credenciales en la URL, pero un cliente con
+ * un defecto (p. ej. `?access_token=...`) no debe terminar dejando su token en los registros. Se conservan los NOMBRES de los
+ * parametros (utiles para depurar) y se omiten sus valores.
+ */
+export function redactQueryValues(url: string): string {
+  const i = url.indexOf('?');
+  return i < 0 ? url : `${url.slice(0, i)}${url.slice(i).replace(/=[^&#]*/g, '=[redacted]')}`;
+}
+
 export async function buildApp(env: Env, deps: AppDependencies = {}): Promise<FastifyInstance> {
   const app = Fastify({
     logger: {
       level: env.LOG_LEVEL,
+      serializers: {
+        // Igual que el serializador por defecto de Fastify, pero sin los valores de la consulta.
+        req: (request) => ({
+          method: request.method,
+          url: redactQueryValues(request.url),
+          version: String(request.headers['accept-version'] ?? '') || undefined,
+          hostname: request.host,
+          remoteAddress: request.ip,
+          remotePort: request.socket?.remotePort,
+        }),
+      },
       redact: [
         'req.headers.authorization',
         'req.headers.cookie',
