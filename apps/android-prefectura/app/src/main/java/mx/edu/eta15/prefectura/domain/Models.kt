@@ -120,4 +120,7 @@ sealed interface SetMarkResult {
     /** El borrador no es de la fecha escolar de hoy (p. ej. cruzo la medianoche): ya no se modifica. */
     data object DraftNotEditable : SetMarkResult
     data object NotFound : SetMarkResult
+
+    /** El servidor ya confirmo esa marca: no puede volver a Pendiente (Pendiente no es una orden de borrar). Solo cambia entre Presente y Ausente. */
+    data object UnmarkAfterAck : SetMarkResult
 }

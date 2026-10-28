@@ -164,5 +164,33 @@
     <string name="mobile_purge_text">Se borran los grupos, los padrones y TAMBIÉN los borradores de captura guardados en este dispositivo. No se envía nada al servidor. Esta acción no se puede deshacer.</string>
     <string name="capture_msg_access_blocked">Acceso bloqueado: reconecta para validar. No se guardó el cambio.</string>
     <string name="capture_msg_group_revoked">Grupo revocado: no se guardó el cambio.</string>
+    <string name="capture_msg_cannot_unmark">Esta marca ya está confirmada por el servidor: solo puede cambiar entre Presente y Ausente.</string>
+
+    <!-- Preparación local para una futura sincronización (outbox). Nada se envía al servidor en esta etapa. -->
+    <string name="outbox_title">Preparación para sincronizar</string>
+    <string name="outbox_local_notice">Preparar guarda la operación solo en este dispositivo. No se envía nada al servidor: todavía no existe el envío.</string>
+    <string name="outbox_marks">Marcas locales: %1$d</string>
+    <string name="outbox_unsealed">Hay cambios sin preparar.</string>
+    <string name="outbox_all_prepared">No hay cambios sin preparar.</string>
+    <string name="outbox_operations">Operaciones preparadas: %1$d</string>
+    <string name="outbox_state_ready">Preparado para envío futuro (aún no se envía)</string>
+    <string name="outbox_state_waiting">Requiere contexto del servidor para poder enviarse</string>
+    <string name="outbox_state_review">Necesita revisión</string>
+    <string name="outbox_state_auth">Requiere volver a autenticar el dispositivo</string>
+    <string name="outbox_state_other">Guardada en este dispositivo</string>
+    <string name="outbox_op_save">Marcas (%1$d)</string>
+    <string name="outbox_op_open">Abrir la lista del día</string>
+    <string name="outbox_prepare">Preparar para sincronizar</string>
+    <string name="outbox_msg_prepared">Preparado en este dispositivo. No se envió nada al servidor.</string>
+    <string name="outbox_msg_already">Ya estaba preparado: no hay cambios nuevos.</string>
+    <string name="outbox_msg_nothing">No hay marcas para preparar.</string>
+    <string name="outbox_msg_too_many">Hay demasiadas marcas para una sola operación.</string>
+    <string name="outbox_msg_invalid">Hay identificadores de alumno no válidos: no se preparó nada.</string>
+    <string name="outbox_msg_unmark">Una marca que pudo haber llegado al servidor no puede volver a Pendiente: cámbiala a Presente o Ausente.</string>
+    <string name="outbox_msg_revoked">El grupo ya no está autorizado: no se preparó nada.</string>
+    <string name="outbox_msg_blocked">El acceso offline está bloqueado: reconecta para continuar.</string>
+    <string name="outbox_msg_local_error">Error local al guardar la preparación. El borrador no se modificó.</string>
+    <string name="outbox_msg_not_sandbox">Solo disponible con datos del servidor de pruebas.</string>
+    <string name="outbox_msg_not_found">No se encontró el borrador.</string>
     <string name="mobile_purge_yes">Borrar todo</string>
 </resources>

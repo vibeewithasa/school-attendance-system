@@ -18,6 +18,8 @@ import mx.edu.eta15.prefectura.domain.AttendanceMark
 import mx.edu.eta15.prefectura.domain.OfflineAccess
 import mx.edu.eta15.prefectura.domain.OfflinePolicy
 import mx.edu.eta15.prefectura.domain.OpenDraftResult
+import mx.edu.eta15.prefectura.domain.OperationState
+import mx.edu.eta15.prefectura.domain.PrepareResult
 import mx.edu.eta15.prefectura.domain.SetMarkResult
 import mx.edu.eta15.prefectura.testContext
 import org.junit.After
@@ -139,7 +141,7 @@ class OfflineCacheEncryptedTest {
     }
 
     @Test
-    fun unaBaseAnteriorV1SinCifrarSeConvierteAlEsquemaV2ConservandoLosDatos() = runBlocking {
+    fun unaBaseAnteriorV1SinCifrarSeConvierteAlEsquemaV3ConservandoLosDatos() = runBlocking {
         // Instalacion de la etapa 1: base SIN cifrar en esquema v1 con datos de demostracion y una captura.
         helper.createDatabase(legacyName, 1).apply {
             execSQL("INSERT INTO profiles (id, displayName, isDemo) VALUES ('p1', 'Demo', 1)")
@@ -149,9 +151,9 @@ class OfflineCacheEncryptedTest {
             execSQL("INSERT INTO attendance_marks (draftId, groupId, studentId, status, markedAtEpochMs) VALUES ('d1', 'g1', 's1', 'PRESENT', 5)")
             close()
         }
-        val db = storage.open() // convierte a SQLCipher y deja la base en v2
+        val db = storage.open() // convierte a SQLCipher y deja la base en v3
         try {
-            assertEquals(2, db.openHelper.writableDatabase.version)
+            assertEquals(3, db.openHelper.writableDatabase.version)
             val repo = LocalAttendanceRepository(db, "p1", clock, SequentialIds("v"))
             assertEquals(listOf("1.º A"), repo.observeGroups().first().map { it.name })
             assertEquals(AttendanceMark.PRESENT, repo.observeTodayDraft("g1").first().let { draftOrNull ->
@@ -161,6 +163,92 @@ class OfflineCacheEncryptedTest {
             assertFalse(ctx.getDatabasePath(legacyName).exists()) // la copia sin cifrar se retiro
         } finally {
             db.close()
+        }
+    }
+
+    @Test
+    fun laOutboxPersisteCifradaAlReiniciarSinRequestIdNiMarcasEnClaro() = runBlocking<Unit> {
+        val profile = SandboxIds.profile(device)
+        val group = SandboxIds.group(profile, g1)
+        val db1 = storage.open()
+        OfflineCacheStore(db1, clock, policy).commit(spec())
+        val repo1 = LocalAttendanceRepository(db1, profile, clock, access = ProfileAccessGate(db1, profile, clock, policy))
+        val draft = (repo1.openTodayDraft(group) as OpenDraftResult.Ready).draftId
+        assertEquals(SetMarkResult.Saved, repo1.setMark(draft, SandboxIds.student(group, s1), AttendanceMark.PRESENT))
+        assertEquals(SetMarkResult.Saved, repo1.setMark(draft, SandboxIds.student(group, s2), AttendanceMark.ABSENT))
+        val prepared = repo1.prepareForSync(draft) as PrepareResult.Prepared
+        db1.close() // "el proceso muere"
+
+        val db2 = storage.open()
+        try {
+            val ops = db2.outboxDao().allOf(profile)
+            assertEquals(2, ops.size)
+            val save = ops.single { it.kind == "SAVE_MARKS" }
+            assertEquals(prepared.requestId, save.requestId)
+            assertEquals(OperationState.WAITING_REMOTE_CONTEXT.name, save.state)
+            assertEquals(2, db2.outboxDao().payloadOf(save.id).size)
+            val repo2 = LocalAttendanceRepository(db2, profile, clock, access = ProfileAccessGate(db2, profile, clock, policy))
+            assertTrue(repo2.prepareForSync(draft) is PrepareResult.AlreadyPrepared) // reabrir NO duplica ni cambia el requestId
+            assertEquals(2, db2.outboxDao().count(profile))
+        } finally {
+            db2.close()
+        }
+        val raw = String(secureFile.readBytes(), Charsets.ISO_8859_1)
+        for (secret in listOf(prepared.requestId, "SAVE_MARKS", "WAITING_REMOTE_CONTEXT", s1, s2, "SQLite format 3"))
+            assertFalse("no debe aparecer en claro: $secret", raw.contains(secret))
+    }
+
+    @Test
+    fun unaBaseAnteriorV2SinCifrarSeConvierteAV3ConservandoLosDatos() = runBlocking<Unit> {
+        helper.createDatabase(legacyName, 2).apply {
+            execSQL("INSERT INTO profiles (id, displayName, isDemo, source) VALUES ('p1', 'Demo', 1, 'DEMO')")
+            execSQL("INSERT INTO school_groups (id, profileId, name, grade, sortOrder) VALUES ('g1', 'p1', '1.º A', 1, 0)")
+            execSQL("INSERT INTO students (id, groupId, givenNames, familyName) VALUES ('s1', 'g1', 'Ana', 'Ficticia')")
+            execSQL("INSERT INTO attendance_drafts (id, profileId, groupId, schoolDate, requestId, createdAtEpochMs, updatedAtEpochMs) VALUES ('d1', 'p1', 'g1', '2026-10-27', 'r1', 1, 1)")
+            execSQL("INSERT INTO attendance_marks (draftId, groupId, studentId, status, markedAtEpochMs) VALUES ('d1', 'g1', 's1', 'ABSENT', 5)")
+            close()
+        }
+        val db = storage.open()
+        try {
+            assertEquals(3, db.openHelper.writableDatabase.version)
+            val repo = LocalAttendanceRepository(db, "p1", clock, SequentialIds("v"))
+            assertEquals(AttendanceMark.ABSENT, repo.observeTodayDraft("g1").first()?.rows?.first()?.mark)
+            assertEquals(0, db.outboxDao().count("p1"))
+            assertFalse(ctx.getDatabasePath(legacyName).exists())
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun unaTransaccionRevertidaNoDejaNadaAlReabrirLaBaseCifrada() = runBlocking<Unit> {
+        val profile = SandboxIds.profile(device)
+        val group = SandboxIds.group(profile, g1)
+        val db1 = storage.open()
+        OfflineCacheStore(db1, clock, policy).commit(spec())
+        val repo1 = LocalAttendanceRepository(db1, profile, clock, access = ProfileAccessGate(db1, profile, clock, policy))
+        val draft = (repo1.openTodayDraft(group) as OpenDraftResult.Ready).draftId
+        assertEquals(SetMarkResult.Saved, repo1.setMark(draft, SandboxIds.student(group, s1), AttendanceMark.PRESENT)) // confirmado
+        val confirmedOps = db1.outboxDao().count(profile)
+        // una transaccion a mitad: cambios escritos pero NUNCA confirmados (la muerte real del proceso se prueba en el E2E: fases crash-*)
+        val raw = db1.openHelper.writableDatabase
+        raw.beginTransaction()
+        raw.execSQL("UPDATE attendance_marks SET status = 'ABSENT' WHERE draftId = '$draft' AND studentId = '${SandboxIds.student(group, s2)}'")
+        raw.execSQL("UPDATE attendance_marks SET status = 'ABSENT' WHERE draftId = '$draft' AND studentId = '${SandboxIds.student(group, s1)}'")
+        raw.endTransaction() // sin setTransactionSuccessful: se revierte todo
+        db1.close()
+
+        val db2 = storage.open()
+        try {
+            val repo2 = LocalAttendanceRepository(db2, profile, clock, access = ProfileAccessGate(db2, profile, clock, policy))
+            val rows = repo2.observeTodayDraft(group).first()!!.rows
+            assertEquals(listOf(AttendanceMark.PRESENT, null), rows.map { it.mark }) // solo lo confirmado
+            assertEquals(confirmedOps, db2.outboxDao().count(profile))
+            // y la app sigue pudiendo capturar y preparar con normalidad
+            assertEquals(SetMarkResult.Saved, repo2.setMark(draft, SandboxIds.student(group, s2), AttendanceMark.ABSENT))
+            assertTrue(repo2.prepareForSync(draft) is PrepareResult.Prepared)
+        } finally {
+            db2.close()
         }
     }
 }

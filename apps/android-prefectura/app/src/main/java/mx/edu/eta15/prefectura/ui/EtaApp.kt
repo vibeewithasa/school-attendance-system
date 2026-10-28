@@ -200,7 +200,12 @@ private fun NavGraphBuilder.sandboxGraph(container: AppContainer, navController:
         WithSandboxRepo(container, navController, R.string.summary_title) { repo, padding ->
             val vm: SummaryViewModel = viewModel(key = "sbx-summary-$groupId", factory = factory { SummaryViewModel(repo, groupId) })
             val state by vm.state.collectAsStateWithLifecycle()
-            SummaryScreen(state, onContinue = { navController.popBackStack() }, contentPadding = padding)
+            SummaryScreen(
+                state,
+                onContinue = { navController.popBackStack() },
+                contentPadding = padding,
+                onPrepare = vm::prepare,
+            )
         }
     }
 }
@@ -245,6 +250,7 @@ private fun CaptureRoute(repo: AttendanceRepository, groupId: String, keyPrefix:
         CaptureMessage.SaveFailed -> stringResource(R.string.capture_msg_save_failed)
         CaptureMessage.AccessBlocked -> stringResource(R.string.capture_msg_access_blocked)
         CaptureMessage.GroupRevoked -> stringResource(R.string.capture_msg_group_revoked)
+        CaptureMessage.CannotUnmark -> stringResource(R.string.capture_msg_cannot_unmark)
         null -> null
     }
     LaunchedEffect(message) {

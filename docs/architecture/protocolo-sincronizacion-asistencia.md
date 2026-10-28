@@ -681,6 +681,43 @@ Revisión crítica del código de la fase 2 antes de conectar Android. Resultado
 
 **Pruebas de esta auditoría (2026-10-28, datos ficticios)**: escritura móvil 30 (PGlite) y 44 (PostgreSQL 18 desechable); suites de asistencia web y de lecturas móviles sin regresiones; `pnpm test:pg-temp` 22 archivos, **611 pruebas, 0 fallos**; `pnpm test` API 993 (3 omitidas por diseño) y portal 162; `test:integration` 41; `typecheck`, `lint`, `build`, `format:check`, `db:check` y `db:whoami` correctos. Android no cambió y no se ejecutó. Las pruebas están en `apps/api/test/helpers/mobile-attendance-write-suite.ts` (bloque «auditoría de seguridad»).
 
+## 21. Fase 3: outbox local persistente en Android (IMPLEMENTADO solo en el sandbox; **Android no envía nada**)
+
+Rama `feat/android-offline-outbox`, apilada sobre el PR #6 → #5 → #4 → #3 → #2 (todos Draft). Room v3, estados y pruebas: [android-prefectura.md](android-prefectura.md) (sección «Outbox local persistente»). Esta fase no cambia el backend, PostgreSQL, `eta15_dev` ni los ADR (0005 y 0006 siguen PROPUESTOS).
+
+### 21.1 Mapa contra el diseño de las fases anteriores
+
+| Concepto del diseño                  | En Android hoy                                                                                                                                                                                  |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Operación `open`                     | `sync_operations` con `kind=OPEN`, una por (perfil, grupo, fecha); sin payload ni `requestId` propio; puede quedar `READY` (solo depende de la fecha) pero nada la envía                        |
+| Operación `saveMarks`                | `kind=SAVE_MARKS`; `requestId` UUID en minúscula; hash `marksHash` idéntico al del backend (SHA-256 de `studentId:status` ordenado y unido con `\|`); máximo 200 marcas; solo marcas explícitas |
+| `sync_day_state`, `sync_acked_marks` | No se crearon: el estado confirmado se deriva de las operaciones `ACKNOWLEDGED` del grupo y la fecha (una sola fuente de verdad)                                                                |
+| `dayId`, `expectedRevision`          | Columnas **fuera de la identidad sellada**, nulas hasta que el transporte las conozca                                                                                                           |
+| Recibo                               | `ackRevision`, `ackedAt`, `ackChanged`, `ackReplayed`, `serverDayId`; solo se llenan en pruebas                                                                                                 |
+
+### 21.2 Identidad sellada y contexto remoto
+
+El `requestId`, el payload, el hash, la fecha escolar y su procedencia se sellan en una sola transacción y son **inmutables** (disparadores). Lo que depende del servidor (`serverDayId`, `expectedRevision`) se completa después sin alterar esa identidad: `resolveContext` solo llena esas columnas y mueve `WAITING_REMOTE_CONTEXT` → `READY` cuando la dependencia está `ACKNOWLEDGED`. Así un reintento reutiliza siempre el mismo `requestId` y el mismo contenido; si cambia la revisión esperada, el servidor responde `409` (se maneja en la fase de transporte) y la persona decide, **sin crear automáticamente** otra operación `READY` con una revisión obsoleta.
+
+### 21.3 Reglas que ya se cumplen (probadas en Room real)
+
+- Un cambio de marca y su intención se guardan en la misma transacción; sellar es todo o nada y un fallo no deja payload parcial ni reemplaza la operación anterior.
+- Editar después de sellar conserva la operación sellada y registra otra intención; una operación que pudo llegar al servidor nunca se reemplaza, solo se encadena; no se borra ninguna operación histórica.
+- Pendiente no es una orden de borrar: no viaja, y una marca confirmada por el servidor no puede volver a Pendiente.
+- Fecha de ayer, fecha no confirmada por el servidor, padrón distinto, alumno inactivo, grupo o dispositivo revocado: nunca `READY`; marcas y payload no se tocan.
+- `SENDING` tras un reinicio = resultado desconocido (`RETRYABLE_ERROR`, `RESULT_UNKNOWN_AFTER_RESTART`).
+
+### 21.4 Lo que NO existe
+
+Cliente HTTP de asistencia, `WorkManager`, reintentos, resolución de `409`, finalización móvil, capturas históricas y correcciones. El E2E contra el sandbox registró **0** peticiones `/attendance`; el release no declara `INTERNET`.
+
+### 21.5 Contrato pendiente para la fase de transporte
+
+1. Cliente `OPEN`: guardar `serverDayId` y `revision` del recibo (`beginSending` → `acknowledge` → `resolveContext` de las `SAVE_MARKS` dependientes).
+2. Cliente `SAVE_MARKS` con `requestId` y `expectedRevision`; recibos `replayed` idempotentes; `409` → `CONFLICT`/`NEEDS_REVIEW`.
+3. Programador de segundo plano con reintentos acotados y reglas de red; `AUTH_REQUIRED` al expirar la sesión móvil.
+4. Decisiones institucionales pendientes (§16.B): capturas tardías, listas finalizadas y conservación local. Ninguna se asume.
+
 ## Qué cubre y qué no este diseño
 
 - **Cubre**: contratos reales verificados, operaciones, identidades, outbox, concurrencia, autorización, fecha, padrón histórico, conflictos, reintentos, pruebas y decisiones.

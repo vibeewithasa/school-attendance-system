@@ -87,7 +87,7 @@ class SecureStorageTest {
     private fun count(db: EtaDatabase, table: String): Int =
         db.openHelper.readableDatabase.query(SimpleSQLiteQuery("SELECT COUNT(*) FROM $table")).use { it.moveToFirst(); it.getInt(0) }
 
-    /** Crea una base anterior SIN cifrar (como la de la etapa 1) con borradores y marcas ficticias. */
+    /** Crea una base anterior SIN cifrar (como la de la etapa 1/2, esquema v2) con borradores y marcas ficticias. */
     private fun createLegacyPlainDb(): Map<String, Int> = runBlocking {
         val plain = Room.databaseBuilder(ctx, EtaDatabase::class.java, legacyName).addCallback(EtaDatabase.integrityCallback).build()
         val groups = plain.seedProfile("legacy", listOf(4, 3))
@@ -97,6 +97,13 @@ class SecureStorageTest {
         repo.setMark(draft, groups[0].studentIds[1], AttendanceMark.ABSENT)
         val counts = listOf("profiles", "school_groups", "students", "attendance_drafts", "attendance_marks").associateWith { count(plain, it) }
         plain.close()
+        // El esquema actual es v3 (outbox); la base anterior SIN cifrar que existio en campo era v1/v2. Se reduce a v2 retirando
+        // las tablas de la outbox (y sus disparadores) para reproducir fielmente esa instalacion.
+        SQLiteDatabase.openDatabase(legacyFile.path, null, SQLiteDatabase.OPEN_READWRITE).use {
+            it.execSQL("DROP TABLE IF EXISTS sync_operation_marks")
+            it.execSQL("DROP TABLE IF EXISTS sync_operations")
+            it.version = 2
+        }
         counts
     }
 

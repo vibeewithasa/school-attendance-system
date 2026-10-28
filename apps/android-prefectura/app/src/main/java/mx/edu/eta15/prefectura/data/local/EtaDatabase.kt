@@ -10,7 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 /**
  * Base local de la app de prefectura.
  *
- * - `version = 2`, `exportSchema = true` (esquemas versionados en `app/schemas`). NUNCA se usa
+ * - `version = 3`, `exportSchema = true` (esquemas versionados en `app/schemas`). NUNCA se usa
  *   `fallbackToDestructiveMigration`: un cambio de esquema exige una migracion escrita y probada.
  * - Room por si solo NO cifra. En la app real SIEMPRE se abre mediante `SecureStorage` (SQLCipher + clave protegida por
  *   Android Keystore); aqui solo queda el constructor en memoria para pruebas. Cifrar la base NO habilita datos escolares
@@ -25,8 +25,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MarkEntity::class,
         RosterSnapshotEntity::class,
         ProfileSyncEntity::class,
+        SyncOperationEntity::class,
+        SyncOperationMarkEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class EtaDatabase : RoomDatabase() {
@@ -35,6 +37,8 @@ abstract class EtaDatabase : RoomDatabase() {
     abstract fun draftDao(): DraftDao
 
     abstract fun cacheDao(): CacheDao
+
+    abstract fun outboxDao(): OutboxDao
 
     companion object {
         /** Reglas que Room no expresa como anotaciones (equivalentes a los CHECK/triggers de PostgreSQL). */
@@ -75,12 +79,26 @@ abstract class EtaDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v2 -> v3: OUTBOX local (ver domain/Outbox.kt). Solo CREA dos tablas y sus indices: no toca ninguna tabla ni fila existente, de
+         * modo que perfiles, grupos, alumnos, padrones, estados de autorizacion, borradores, marcas y huellas se conservan intactos (se
+         * prueba en SchemaMigrationTest, incluida la ruta completa 1 -> 2 -> 3). Las reglas de integridad nuevas son disparadores
+         * (INTEGRITY_SQL) que corren en cada apertura, como las de la v1 y la v2.
+         */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                OUTBOX_V3_SQL.forEach(db::execSQL)
+            }
+        }
+
         val integrityCallback = object : Callback() {
             override fun onOpen(db: SupportSQLiteDatabase) {
                 super.onOpen(db)
                 INTEGRITY_SQL.forEach(db::execSQL)
             }
         }
+
+        private val OUTBOX_V3_SQL: List<String> get() = OutboxSql.CREATE_V3
 
         private val INTEGRITY_SQL = listOf(
             // Solo NULL (pendiente), PRESENT o ABSENT son valores de marca.
@@ -123,11 +141,11 @@ abstract class EtaDatabase : RoomDatabase() {
             CREATE TRIGGER IF NOT EXISTS drafts_identity_update BEFORE UPDATE OF id, profileId, groupId, schoolDate, requestId ON attendance_drafts
             BEGIN SELECT RAISE(ABORT, 'identidad del borrador inmutable'); END
             """.trimIndent(),
-        )
+        ) + OutboxSql.TRIGGERS
 
         fun inMemory(context: Context): EtaDatabase =
             Room.inMemoryDatabaseBuilder(context.applicationContext, EtaDatabase::class.java)
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .addCallback(integrityCallback)
                 .build()
     }

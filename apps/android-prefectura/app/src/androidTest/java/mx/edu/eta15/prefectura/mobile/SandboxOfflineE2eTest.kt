@@ -26,6 +26,8 @@ import mx.edu.eta15.prefectura.domain.IdGenerator
 import mx.edu.eta15.prefectura.domain.OfflineAccess
 import mx.edu.eta15.prefectura.domain.OfflinePolicy
 import mx.edu.eta15.prefectura.domain.OpenDraftResult
+import mx.edu.eta15.prefectura.domain.OperationState
+import mx.edu.eta15.prefectura.domain.PrepareResult
 import mx.edu.eta15.prefectura.domain.SetMarkResult
 import mx.edu.eta15.prefectura.testContext
 import org.junit.Assert.assertEquals
@@ -44,6 +46,10 @@ import org.junit.runner.RunWith
  *   link-download -> vincula (clave nueva), abre sesion y descarga los grupos autorizados a la base cifrada (`-e groups N`).
  *   offline       -> SIN red: comprueba que no hay internet, abre grupos y padron locales, marca Presente/Ausente y deja Pendientes.
  *   persist       -> proceso nuevo: la captura sigue ahi.
+ *   prepare       -> SIN red: "Preparar para sincronizar" sella la operacion en la outbox local (esquema Room v3). No envia nada.
+ *   crash-open    -> SIN red: abre una transaccion SQL, escribe una marca SIN confirmar y se queda esperando: el guion mata el proceso.
+ *   crash-verify  -> proceso nuevo: lo no confirmado NO existe, lo confirmado si, la integridad de la base es correcta y se sigue operando.
+ *   persist-outbox-> proceso nuevo: la operacion preparada sigue ahi, intacta; preparar de nuevo no la duplica.
  *   reconnect     -> con red: vuelve a descargar (`-e expectRevoked N`): detecta cambios de autorizacion sin perder borradores.
  *   isolation     -> otro perfil descargado: la cache de una identidad no es visible desde la otra.
  */
@@ -107,6 +113,10 @@ class SandboxOfflineE2eTest {
                 "link-download" -> linkAndDownload(db)
                 "offline" -> offline(db)
                 "persist" -> persist(db)
+                "prepare" -> prepare(db)
+                "persist-outbox" -> persistOutbox(db)
+                "crash-open" -> crashOpen(db)
+                "crash-verify" -> crashVerify(db)
                 "reconnect" -> reconnect(db)
                 "isolation" -> isolation(db)
                 else -> throw AssertionError("fase desconocida: $phase")
@@ -183,6 +193,81 @@ class SandboxOfflineE2eTest {
         assertNotNull(repo.observeSyncInfo().first())
     }
 
+    private suspend fun prepare(db: EtaDatabase) {
+        val online = reachable()
+        say("NETWORK reachable=$online")
+        assertFalse("la red debe estar apagada en esta fase", online)
+        val profile = profileOfLink()
+        val repo = repo(db, profile)
+        val group = repo.observeGroups().first().first()
+        val draft = repo.observeTodayDraft(group.id).first()!!
+        val before = repo.observeOutbox(group.id).first()!!
+        assertTrue("hay cambios sin preparar", before.unsealedChanges)
+        val result = repo.prepareForSync(draft.draftId)
+        assertTrue("se prepara sin red: $result", result is PrepareResult.Prepared)
+        result as PrepareResult.Prepared
+        val ops = db.outboxDao().allOf(profile)
+        val save = ops.single { it.kind == "SAVE_MARKS" }
+        say("PREPARE state=${result.state} reason=${result.reason} marks=${result.markCount} ops=${ops.size} saveState=${save.state} hasContext=${save.serverDayId != null} requestIdLength=${result.requestId.length}")
+        assertEquals(2, result.markCount) // un Presente y un Ausente; los Pendientes no viajan
+        assertEquals(2, ops.size)
+        assertTrue("sin contexto del servidor no queda lista", save.state != OperationState.READY.name && save.serverDayId == null)
+        assertEquals(result.requestId, save.requestId)
+        assertFalse(repo.observeOutbox(group.id).first()!!.unsealedChanges)
+        // nada salio: ninguna operacion paso por SENDING
+        assertTrue(ops.all { it.attempts == 0 && it.state != OperationState.SENDING.name && it.state != OperationState.ACKNOWLEDGED.name })
+    }
+
+    private suspend fun persistOutbox(db: EtaDatabase) {
+        val profile = profileOfLink()
+        val repo = repo(db, profile)
+        val group = repo.observeGroups().first().first()
+        val ops = db.outboxDao().allOf(profile)
+        val save = ops.single { it.kind == "SAVE_MARKS" }
+        say("PERSIST-OUTBOX ops=${ops.size} saveState=${save.state} marks=${save.markCount} requestIdLength=${save.requestId?.length}")
+        assertEquals(2, ops.size)
+        assertNotNull(save.requestId)
+        assertEquals(2, db.outboxDao().payloadOf(save.id).size)
+        val draft = repo.observeTodayDraft(group.id).first()!!
+        assertTrue("preparar otra vez no duplica", repo.prepareForSync(draft.draftId) is PrepareResult.AlreadyPrepared)
+        assertEquals(2, db.outboxDao().count(profile))
+    }
+
+    private suspend fun crashOpen(db: EtaDatabase) {
+        val profile = profileOfLink()
+        val repo = repo(db, profile)
+        val group = repo.observeGroups().first().first()
+        val draft = repo.observeTodayDraft(group.id).first()!!
+        val pending = draft.rows.first { it.mark == null }.student.id
+        val raw = db.openHelper.writableDatabase
+        raw.beginTransaction()
+        raw.execSQL("UPDATE attendance_marks SET status = 'PRESENT', markedAtEpochMs = 1 WHERE draftId = '${draft.draftId}' AND studentId = '$pending'")
+        raw.execSQL("UPDATE attendance_drafts SET updatedAtEpochMs = updatedAtEpochMs + 1 WHERE id = '${draft.draftId}'")
+        say("CRASH-OPEN transaction=abierta sinConfirmar=1")
+        Thread.sleep(120_000) // el guion externo mata el proceso mientras la transaccion sigue abierta
+    }
+
+    private suspend fun crashVerify(db: EtaDatabase) {
+        val profile = profileOfLink()
+        val repo = repo(db, profile)
+        val group = repo.observeGroups().first().first()
+        val draft = repo.observeTodayDraft(group.id).first()!!
+        val s = draft.summary
+        val integrity = db.openHelper.readableDatabase.query("PRAGMA integrity_check").use { it.moveToFirst(); it.getString(0) }
+        val ops = db.outboxDao().allOf(profile)
+        say("CRASH-VERIFY present=${s.present} absent=${s.absent} pending=${s.pending} ops=${ops.size} integrity=$integrity")
+        assertEquals("ok", integrity)
+        assertEquals(1, s.present) // la marca sin confirmar NO existe
+        assertEquals(1, s.absent)
+        assertEquals(3, s.pending)
+        assertEquals(2, ops.size)
+        assertTrue("la operacion preparada sigue intacta", ops.single { it.kind == "SAVE_MARKS" }.markCount == 2)
+        // y la app sigue operando
+        val pending = draft.rows.first { it.mark == null }.student.id
+        assertEquals(SetMarkResult.Saved, repo.setMark(draft.draftId, pending, AttendanceMark.PRESENT))
+        assertEquals(SetMarkResult.Saved, repo.setMark(draft.draftId, pending, null))
+    }
+
     private suspend fun reconnect(db: EtaDatabase) {
         assertTrue("la red debe estar encendida", reachable())
         val c = controller(db)
@@ -213,6 +298,14 @@ class SandboxOfflineE2eTest {
                 assertEquals(OpenDraftResult.GroupRevoked, repo.openTodayDraft(g.id))
             }
         }
+        // la outbox sobrevivio a la reconexion; con el grupo revocado sus operaciones sin enviar pasan a revision (no se borran)
+        val ops = db.outboxDao().allOf(profile)
+        say("OUTBOX-AFTER ops=${ops.size} states=" + ops.joinToString("|") { "${it.kind}:${it.state}:${it.reasonCode}" })
+        if (ops.isNotEmpty()) {
+            assertEquals(2, ops.size)
+            if (expectRevoked > 0) assertTrue(ops.all { it.state == OperationState.NEEDS_REVIEW.name })
+            assertTrue(ops.none { it.state == OperationState.SENDING.name || it.state == OperationState.ACKNOWLEDGED.name })
+        }
     }
 
     private suspend fun isolation(db: EtaDatabase) {
@@ -228,6 +321,15 @@ class SandboxOfflineE2eTest {
         say("ISOLATION mine=${mine.size} otherProfiles=${others.size}")
         assertTrue("existe cache de otra identidad en el mismo almacenamiento", others.isNotEmpty())
         for (other in others) {
+            // la outbox de la otra identidad existe en el mismo archivo cifrado, pero esta identidad no la ve ni la toca
+            val otherOps = db.outboxDao().allOf(other)
+            say("ISOLATION-OUTBOX otherOps=${otherOps.size} mineOps=${db.outboxDao().count(profile)}")
+            for (op in otherOps) {
+                assertEquals(OpenDraftResult.GroupNotFound, repo.openTodayDraft(op.groupId))
+                assertEquals(PrepareResult.DraftNotFound, repo.prepareForSync(op.draftId))
+                assertEquals(null, repo.observeOutbox(op.groupId).first())
+            }
+            assertTrue("esta identidad no tiene operaciones de la otra", db.outboxDao().allOf(profile).none { it.profileId == other })
             val otherGroups = db.cacheDao().groupsOf(other)
             assertTrue(otherGroups.isNotEmpty())
             // desde ESTA identidad no se abre ni se lee nada de la otra

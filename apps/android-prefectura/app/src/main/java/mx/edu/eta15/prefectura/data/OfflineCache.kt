@@ -105,6 +105,7 @@ class OfflineCacheStore(
     private val policy: OfflinePolicy = OfflinePolicy.SANDBOX_DEFAULT,
 ) : OfflineSink {
     private val cache = db.cacheDao()
+    private val outbox = OutboxStore(db, clock)
 
     /** Escribe una descarga COMPLETA en una sola transaccion (todo o nada). */
     override suspend fun commit(spec: DownloadSpec): CommitResult = db.withTransaction {
@@ -146,6 +147,7 @@ class OfflineCacheStore(
             val previous = db.catalogDao().rosterDigestOf(localId)
             if (previous != null && previous != digest) changed += 1
             flagged += cache.flagDraftsForReview(profileId, localId, digest, REASON_ROSTER_CHANGED)
+            outbox.reviewRosterChanged(profileId, localId) // lo que aun no se envio de esos borradores queda para revision
             cache.upsertSnapshot(RosterSnapshotEntity(localId, now, spec.serverSchoolDate, digest, g.students.size))
         }
         // Grupos conocidos que el servidor ya no autoriza (no vinieron o su padron respondio "no encontrado"): bloqueados, nunca borrados.
@@ -155,6 +157,7 @@ class OfflineCacheStore(
             if (gone && k.authState != GroupEntity.AUTH_REVOKED) {
                 cache.revokeGroup(profileId, k.id)
                 flagged += cache.flagAllDraftsOfGroup(profileId, k.id, REASON_GROUP_REVOKED)
+                outbox.reviewGroupRevoked(profileId, k.id) // las operaciones sin enviar se conservan, en revision
                 revoked += 1
             }
         }
@@ -177,7 +180,9 @@ class OfflineCacheStore(
     /** El servidor informo que el dispositivo fue revocado o la cuenta ya no es elegible: se bloquea todo, se conserva todo. */
     override suspend fun markAuthState(deviceId: String, state: String): Boolean = db.withTransaction {
         require(state == AUTH_DEVICE_REVOKED || state == AUTH_ACCOUNT_BLOCKED || state == AUTH_ACTIVE)
-        cache.setAuthState(SandboxIds.profile(deviceId), state, clock.millis()) > 0
+        val profileId = SandboxIds.profile(deviceId)
+        if (state != AUTH_ACTIVE) outbox.requireAuth(profileId, state) // lo que estaba listo exige volver a autenticarse
+        cache.setAuthState(profileId, state, clock.millis()) > 0
     }
 
     /** Borrado EXPLICITO (confirmado por la persona) de los datos descargados de un dispositivo, borradores incluidos. */
