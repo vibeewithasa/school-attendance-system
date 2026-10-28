@@ -18,6 +18,9 @@ import kotlinx.coroutines.launch
 import mx.edu.eta15.prefectura.data.NetworkMonitor
 import mx.edu.eta15.prefectura.dev.DevHealthCheck
 import mx.edu.eta15.prefectura.dev.HealthResult
+import mx.edu.eta15.prefectura.domain.AccessBlock
+import mx.edu.eta15.prefectura.domain.OfflineAccess
+import mx.edu.eta15.prefectura.domain.SyncInfo
 import mx.edu.eta15.prefectura.domain.AttendanceMark
 import mx.edu.eta15.prefectura.domain.AttendanceRepository
 import mx.edu.eta15.prefectura.domain.DraftState
@@ -39,10 +42,17 @@ data class GroupsUiState(
     val groups: List<Group> = emptyList(),
     val date: LocalDate? = null,
     val isSchoolDay: Boolean = true,
+    /** Autorizacion offline (perfiles descargados del servidor de pruebas); [OfflineAccess.NotApplicable] en la demostracion. */
+    val access: OfflineAccess = OfflineAccess.NotApplicable,
+    val sync: SyncInfo? = null,
 )
 
 class GroupsViewModel(repo: AttendanceRepository) : ViewModel() {
-    val state: StateFlow<GroupsUiState> = combine(repo.observeProfile(), repo.observeGroups()) { profile, groups ->
+    val state: StateFlow<GroupsUiState> = combine(
+        combine(repo.observeProfile(), repo.observeGroups()) { profile, groups -> profile to groups },
+        repo.observeAccess(),
+        repo.observeSyncInfo(),
+    ) { (profile, groups), access, sync ->
         val date = repo.schoolToday()
         GroupsUiState(
             loading = false,
@@ -50,6 +60,8 @@ class GroupsViewModel(repo: AttendanceRepository) : ViewModel() {
             groups = groups,
             date = date,
             isSchoolDay = SchoolCalendar.isSchoolDay(date),
+            access = access,
+            sync = sync,
         )
     }
         .catch { emit(GroupsUiState(loading = false, error = true)) }
@@ -75,16 +87,18 @@ data class RosterUiState(
     val groupName: String? = null,
     val students: List<Student> = emptyList(),
     val isSchoolDay: Boolean = true,
+    val access: OfflineAccess = OfflineAccess.NotApplicable,
 )
 
 class RosterViewModel(repo: AttendanceRepository, groupId: String) : ViewModel() {
     val state: StateFlow<RosterUiState> =
-        combine(repo.observeGroupName(groupId), repo.observeRoster(groupId)) { name, students ->
+        combine(repo.observeGroupName(groupId), repo.observeRoster(groupId), repo.observeAccess()) { name, students, access ->
             RosterUiState(
                 loading = false,
                 groupName = name,
                 students = students,
                 isSchoolDay = SchoolCalendar.isSchoolDay(repo.schoolToday()),
+                access = access,
             )
         }
             .catch { emit(RosterUiState(loading = false, error = true)) }
@@ -105,9 +119,15 @@ sealed interface CaptureUiState {
     data object EmptyRoster : CaptureUiState
 
     data object Error : CaptureUiState
+
+    /** Perfil descargado sin autorizacion offline vigente: la captura esta bloqueada y los borradores se conservan. */
+    data class Blocked(val reason: AccessBlock) : CaptureUiState
+
+    /** El grupo dejo de estar autorizado: captura bloqueada, borradores conservados. */
+    data object GroupRevoked : CaptureUiState
 }
 
-enum class CaptureMessage { DraftNotEditable, NotFound, SaveFailed }
+enum class CaptureMessage { DraftNotEditable, NotFound, SaveFailed, AccessBlocked, GroupRevoked }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CaptureViewModel(private val repo: AttendanceRepository, private val groupId: String) : ViewModel() {
@@ -132,9 +152,15 @@ class CaptureViewModel(private val repo: AttendanceRepository, private val group
                 Opening.Failed -> flowOf(CaptureUiState.Error)
                 is Opening.Done -> when (val r = o.result) {
                     is OpenDraftResult.Ready ->
-                        repo.observeTodayDraft(groupId).map { d ->
-                            if (d == null) CaptureUiState.Loading else CaptureUiState.Ready(d)
+                        combine(repo.observeTodayDraft(groupId), repo.observeAccess()) { d, access ->
+                            when {
+                                access is OfflineAccess.Blocked -> CaptureUiState.Blocked(access.reason)
+                                d == null -> CaptureUiState.Loading
+                                else -> CaptureUiState.Ready(d)
+                            }
                         }
+                    is OpenDraftResult.AccessBlocked -> flowOf(CaptureUiState.Blocked(r.reason))
+                    OpenDraftResult.GroupRevoked -> flowOf(CaptureUiState.GroupRevoked)
                     is OpenDraftResult.NotSchoolDay -> flowOf(CaptureUiState.NotSchoolDay(r.date))
                     OpenDraftResult.GroupNotFound -> flowOf(CaptureUiState.GroupNotFound)
                     OpenDraftResult.EmptyRoster -> flowOf(CaptureUiState.EmptyRoster)
@@ -163,6 +189,8 @@ class CaptureViewModel(private val repo: AttendanceRepository, private val group
                     SetMarkResult.Saved -> null
                     SetMarkResult.DraftNotEditable -> CaptureMessage.DraftNotEditable
                     SetMarkResult.NotFound -> CaptureMessage.NotFound
+                    is SetMarkResult.AccessBlocked -> CaptureMessage.AccessBlocked
+                    SetMarkResult.GroupRevoked -> CaptureMessage.GroupRevoked
                 }
             } catch (e: CancellationException) {
                 throw e

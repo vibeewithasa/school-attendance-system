@@ -17,6 +17,11 @@ import mx.edu.eta15.prefectura.data.local.EtaDatabase
 import mx.edu.eta15.prefectura.data.local.DraftEntity
 import mx.edu.eta15.prefectura.data.local.MarkEntity
 import mx.edu.eta15.prefectura.data.local.RosterRow
+import java.time.ZoneOffset
+import kotlinx.coroutines.flow.emptyFlow
+import mx.edu.eta15.prefectura.domain.AccessGate
+import mx.edu.eta15.prefectura.domain.OfflineAccess
+import mx.edu.eta15.prefectura.domain.SyncInfo
 import mx.edu.eta15.prefectura.domain.AttendanceMark
 import mx.edu.eta15.prefectura.domain.AttendanceRepository
 import mx.edu.eta15.prefectura.domain.CaptureRow
@@ -40,6 +45,8 @@ class LocalAttendanceRepository(
     private val clock: Clock,
     private val ids: IdGenerator = IdGenerator.Random,
     private val dateRefreshMs: Long = 30_000,
+    /** Perfiles descargados del servidor de pruebas: vigencia offline, revocaciones y reloj. `null` = demostracion local. */
+    private val access: AccessGate? = null,
 ) : AttendanceRepository {
     private val catalog = db.catalogDao()
     private val drafts = db.draftDao()
@@ -68,14 +75,40 @@ class LocalAttendanceRepository(
                         studentCount = it.studentCount,
                         markedToday = it.markedToday,
                         hasDraftToday = it.hasDraftToday > 0,
+                        revoked = it.authState != "ACTIVE",
+                        downloadedAt = it.downloadedAtEpochMs?.let(Instant::ofEpochMilli),
+                        needsReview = it.needsReview > 0,
                     )
                 }
             }
         }
 
-    override fun observeRoster(groupId: String): Flow<List<Student>> =
-        catalog.observeStudents(profileId, groupId).map { list ->
+    override fun observeRoster(groupId: String): Flow<List<Student>> {
+        val students = catalog.observeStudents(profileId, groupId).map { list ->
             list.map { Student(it.id, it.givenNames, it.familyName) }
+        }
+        val gate = access ?: return students
+        // Perfil descargado: sin autorizacion vigente (o con el grupo revocado) NO se entrega el padron.
+        return combine(gate.observe(), catalog.observeGroupAuthState(profileId, groupId), students) { acc, auth, list ->
+            if (acc is OfflineAccess.Blocked || auth != "ACTIVE") emptyList() else list
+        }
+    }
+
+    override fun observeAccess(): Flow<OfflineAccess> = access?.observe() ?: super.observeAccess()
+
+    override fun observeSyncInfo(): Flow<SyncInfo?> =
+        if (access == null) {
+            super.observeSyncInfo()
+        } else {
+            db.cacheDao().observeSync(profileId).map { s ->
+                s?.let {
+                    SyncInfo(
+                        lastDownloadAt = Instant.ofEpochMilli(it.lastDownloadAtEpochMs),
+                        lastContactAt = Instant.ofEpochMilli(it.lastServerContactEpochMs),
+                        serverSchoolDate = LocalDate.parse(it.serverSchoolDate),
+                    )
+                }
+            }
         }
 
     override fun observeGroupName(groupId: String): Flow<String?> = catalog.observeGroupName(profileId, groupId)
@@ -83,8 +116,11 @@ class LocalAttendanceRepository(
     override suspend fun openTodayDraft(groupId: String): OpenDraftResult {
         val today = schoolToday()
         if (!SchoolCalendar.isSchoolDay(today)) return OpenDraftResult.NotSchoolDay(today)
+        (access?.current() as? OfflineAccess.Blocked)?.let { return OpenDraftResult.AccessBlocked(it.reason) }
+        access?.touch()
         return db.withTransaction {
             if (catalog.groupExists(profileId, groupId) == 0) return@withTransaction OpenDraftResult.GroupNotFound
+            if (catalog.groupAuthState(profileId, groupId) != "ACTIVE") return@withTransaction OpenDraftResult.GroupRevoked
             val date = today.toString()
             drafts.findDraftId(profileId, groupId, date)?.let {
                 return@withTransaction OpenDraftResult.Ready(it, created = false)
@@ -93,7 +129,10 @@ class LocalAttendanceRepository(
             if (students.isEmpty()) return@withTransaction OpenDraftResult.EmptyRoster
             val now = clock.millis()
             val draftId = ids.newId()
-            drafts.insertDraft(DraftEntity(draftId, profileId, groupId, date, ids.newId(), now, now))
+            // El padron con el que nace el borrador queda como referencia historica (NULL en la demostracion).
+            drafts.insertDraft(
+                DraftEntity(draftId, profileId, groupId, date, ids.newId(), now, now, rosterDigest = catalog.rosterDigestOf(groupId)),
+            )
             // El padron del borrador se congela aqui: una marca pendiente por alumno del grupo.
             drafts.insertMarks(students.map { MarkEntity(draftId, groupId, it.id, status = null, markedAtEpochMs = null) })
             OpenDraftResult.Ready(draftId, created = true)
@@ -114,9 +153,12 @@ class LocalAttendanceRepository(
             }
         }
 
-    override suspend fun setMark(draftId: String, studentId: String, mark: AttendanceMark?): SetMarkResult =
-        db.withTransaction {
+    override suspend fun setMark(draftId: String, studentId: String, mark: AttendanceMark?): SetMarkResult {
+        (access?.current() as? OfflineAccess.Blocked)?.let { return SetMarkResult.AccessBlocked(it.reason) }
+        access?.touch()
+        return db.withTransaction {
             val draft = drafts.findDraft(profileId, draftId) ?: return@withTransaction SetMarkResult.NotFound
+            if (catalog.groupAuthState(profileId, draft.groupId) != "ACTIVE") return@withTransaction SetMarkResult.GroupRevoked
             // Un borrador de otra fecha escolar (p. ej. de ayer) ya no se modifica.
             if (draft.schoolDate != schoolToday().toString()) return@withTransaction SetMarkResult.DraftNotEditable
             val now = clock.millis()
@@ -125,6 +167,7 @@ class LocalAttendanceRepository(
             drafts.touchDraft(draftId, now)
             SetMarkResult.Saved
         }
+    }
 
     private fun DraftEntity.toState(groupName: String, rows: List<RosterRow>): DraftState = DraftState(
         draftId = id,
@@ -139,5 +182,7 @@ class LocalAttendanceRepository(
             )
         },
         updatedAt = Instant.ofEpochMilli(updatedAtEpochMs),
+        needsReview = needsReview > 0,
+        reviewReason = reviewReason,
     )
 }

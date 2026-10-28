@@ -3,6 +3,7 @@ package mx.edu.eta15.prefectura.domain
 import java.time.LocalDate
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 
 /** Generador de identificadores locales (UUID aleatorios; inyectable para pruebas). */
 fun interface IdGenerator {
@@ -35,6 +36,37 @@ interface AttendanceRepository {
     suspend fun setMark(draftId: String, studentId: String, mark: AttendanceMark?): SetMarkResult
 
     fun schoolToday(): LocalDate
+
+    /** Autorizacion offline vigente (solo perfiles descargados; en la demostracion local es [OfflineAccess.NotApplicable]). */
+    fun observeAccess(): Flow<OfflineAccess> = flowOf(OfflineAccess.NotApplicable)
+
+    /** Ultima descarga y ultimo contacto con el servidor; `null` en la demostracion local. */
+    fun observeSyncInfo(): Flow<SyncInfo?> = flowOf(null)
+}
+
+/** Decide si las consultas escolares protegidas de un perfil descargado estan permitidas ahora (ver ProfileAccessGate). */
+interface AccessGate {
+    suspend fun current(): OfflineAccess
+
+    fun observe(): Flow<OfflineAccess>
+
+    /** Registra el instante visto (deteccion de retroceso del reloj). */
+    suspend fun touch()
+}
+
+/**
+ * Politica de vigencia offline de DEMOSTRACION. SANDBOX ONLY: la escuela NO ha aprobado ninguna vigencia de acceso offline,
+ * ni capturas tardias, ni borrado remoto. Esta politica solo permite ensayar el comportamiento al vencerse (vigencia corta).
+ */
+data class OfflinePolicy(
+    val validity: java.time.Duration,
+    /** Retroceso de reloj tolerado antes de considerarlo manipulacion. */
+    val clockTolerance: java.time.Duration = java.time.Duration.ofMinutes(2),
+) {
+    companion object {
+        /** Por omision 30 minutos (configurable al compilar con -Peta15.offlineValidityMinutes). No es una decision institucional. */
+        val SANDBOX_DEFAULT = OfflinePolicy(java.time.Duration.ofMinutes(30))
+    }
 }
 
 /**

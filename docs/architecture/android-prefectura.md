@@ -1,4 +1,4 @@
-# App Android de prefectura (etapa 1 captura local + etapa 2A almacenamiento cifrado)
+# App Android de prefectura (etapa 1 captura local + 2A almacenamiento cifrado + 3 caché offline SANDBOX)
 
 Estado (2026-10-27): **app nativa funcional, solo con datos SINTÉTICOS**, compilada, instalada y probada en el emulador. La etapa 2A agregó **cifrado en reposo real** (Room + SQLCipher, clave protegida por Android Keystore). Sigue sin ser un cliente de la escuela: **cifrar la base no la hace apta para datos de menores** (faltan inicio de sesión, autorización, revocación, sincronización y decisiones institucionales).
 
@@ -65,7 +65,7 @@ UI (Compose, ViewModels + StateFlow)  →  Dominio (modelos, reglas, puertos)  �
 - `LocalAttendanceRepository` filtra todo por `profileId` (aislamiento por perfil) y escribe en transacciones de Room. `AppContainer` abre el almacenamiento de forma asíncrona y **fail closed**: la UI muestra "Abriendo…", los datos o la pantalla de fallo (nunca una base vacía de respaldo).
 - La fecha escolar replica la regla del servidor (`America/Mazatlan`, lunes a viernes) **solo como fecha de demostración**: el reloj del dispositivo no es autoridad escolar. Sábado/domingo no abren listas nuevas; un borrador de otro día ya no se modifica; cambiar el reloj hacia atrás no reabre borradores ajenos al día.
 
-## Room (esquema v1, `exportSchema=true`, sin migración destructiva)
+## Room (esquema v1 de la etapa 1; v2 en la etapa 3 añade la caché offline, ver su sección; `exportSchema=true`, sin migración destructiva)
 
 | Tabla               | Contenido                                                                              | Integridad                                                                            |
 | ------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
@@ -156,7 +156,7 @@ Esta conversión es solo para datos de demostración sintéticos; **nunca** se u
 
 ### Aislamiento de perfil
 
-Todo dato lleva `profileId` con llaves foráneas compuestas (grupo→perfil, borrador→grupo del mismo perfil, marca→borrador y alumno del mismo grupo); el repositorio está atado a un perfil y no ve ni modifica datos de otro (probado también sobre la base cifrada). `CatalogDao.deleteProfile(id)` borra un solo perfil en cascada sin tocar los demás. **No hay gestión de cuentas** ni cambio de perfil en la interfaz; un cambio de titular implicará borrar el perfil anterior (ADR 0005). No se requirieron migraciones de Room (el esquema sigue en la versión 1).
+Todo dato lleva `profileId` con llaves foráneas compuestas (grupo→perfil, borrador→grupo del mismo perfil, marca→borrador y alumno del mismo grupo); el repositorio está atado a un perfil y no ve ni modifica datos de otro (probado también sobre la base cifrada). `CatalogDao.deleteProfile(id)` borra un solo perfil en cascada sin tocar los demás. **No hay gestión de cuentas** ni cambio de perfil en la interfaz; un cambio de titular implicará borrar el perfil anterior (ADR 0005). La etapa 2A no requirió migraciones de Room; la etapa 3 añade la migración aditiva 1→2.
 
 ### Errores y pantalla de fallo
 
@@ -181,6 +181,89 @@ Pantalla «Vincular dispositivo (entorno de pruebas)» en Inicio, con el aviso *
 - `LinkStore.kt`: solo identificadores y etiqueta en `noBackupFilesDir`; la sesión nunca se guarda y los datos escolares leídos no se almacenan en Room.
 
 Pruebas: 64 JVM de debug (10 DPoP, 13 máquina de estados, 17 de política) y 41 de release; 75 instrumentadas (7 del Keystore real: creación explícita, no reemplazo, formato del JWK, firma verificada, borrado, clave no exportable; 5 de interfaz con servidor falso) y una prueba de extremo a extremo (`SandboxE2eTest`, solo con `-e e2e sandbox`) contra `pnpm dev:sandbox -- --catalog-write --students-write --prefect-write --attendance-write --seed-attendance --mobile-auth`. No hay envío de asistencia, sincronización ni cola.
+
+## Caché offline de grupos autorizados (etapa 3, solo SANDBOX, rama `feat/android-offline-cache`)
+
+> **Dependencia de ramas**: esta rama parte de `feat/android-mobile-auth` (PR #2, borrador, sin fusionar) porque usa su canal `/mobile/*`. Su Draft PR tiene como base esa rama, **no** `main`; si el PR #2 cambia, esta rama debe actualizarse sobre él. Nada de esto está aprobado: el [ADR 0005](../decisions/0005-android-autenticacion-movil.md) sigue **PROPUESTO**.
+
+### Qué hace
+
+Con el dispositivo vinculado al servidor de PRUEBAS (`pnpm dev:sandbox -- ... --mobile-auth`, cuentas y alumnos ficticios) la app descarga **solo** lo que el servidor autoriza a esa persona y lo guarda en la misma base Room/SQLCipher de la etapa 2A. Después se pueden abrir grupos y padrón y marcar Presente/Ausente/Pendiente **sin internet**, también tras cerrar y reabrir el proceso. La captura es un **borrador local**: no se envía nada de asistencia al servidor (no existe ninguna petición `/attendance` en el código de debug ni en el de release; hay pruebas estáticas que lo verifican).
+
+### Descarga mínima y autorizada
+
+1. Con sesión móvil abierta: `GET /mobile/school/me/groups` (grupos asignados vigentes) y, por cada grupo, `GET /mobile/school/groups/:id/roster`. No se agregaron rutas ni permisos; no se descarga «todo» para filtrar en el teléfono.
+2. Proyección mínima: id remoto, nombre y apellido del alumno, grupo, grado, turno y ciclo. Sin código escolar, expediente, CURP, tutores, fotografía ni datos médicos.
+3. `ResponseValidator` (solo debug) rechaza la descarga entera si hay identificadores que no son UUID, duplicados, más de 50 grupos o 1000 alumnos, fecha escolar ausente o un padrón que no corresponde al grupo pedido.
+4. **Todo o nada**: `OfflineCacheStore.commit` escribe en **una transacción** de Room. Si algo falla (red, validación, proceso detenido) queda el último estado válido y la interfaz dice «descarga incompleta»; nunca se declara completa una descarga parcial.
+5. Un `404` al pedir el padrón de un grupo significa «ya no está asignado» y es un resultado válido (grupo revocado), no un error de red. `401 DEVICE_REVOKED` y `403/NOT_ELIGIBLE` bloquean el perfil.
+
+### Modelo local (Room v2, migración aditiva `MIGRATION_1_2`, sin `fallbackToDestructiveMigration`)
+
+- `profiles` +`source` (`DEMO` o `SANDBOX`); `school_groups` +`remoteId`, ciclo, turno, `authState` (`ACTIVE`/`REVOKED`); `students` +`remoteId`, `active`; `attendance_drafts` +`rosterDigest`, `needsReview`, `reviewReason`.
+- Tablas nuevas: `roster_snapshots` (padrón usado por grupo: fecha, huella SHA-256 y conteo) y `profile_sync` (dispositivo, último contacto con el servidor, fecha escolar confirmada, vigencia, estado de autorización y marca de agua del reloj).
+- Esquema exportado en `app/schemas/.../2.json`. La migración conserva datos (prueba `SchemaMigrationTest`) y la conversión de la base v1 sin cifrar acepta las versiones 1 y 2.
+- Se usa `@Upsert`, nunca `REPLACE` (que borraría en cascada borradores y marcas); una prueba estática lo vigila. Los alumnos que desaparecen del padrón pasan a `active = 0`, **no se borran**.
+
+### Cuenta ↔ caché (aislamiento)
+
+- La identidad sale del servidor: el perfil SANDBOX es `sbx.<deviceId>` con el `deviceId` devuelto al aprobar/abrir sesión, nunca de un campo de la interfaz. El grupo local es `<perfil>.<grupoRemoto>` y el alumno `<grupoLocal>.<alumnoRemoto>`, de modo que dos cuentas no comparten filas aunque coincidan los identificadores remotos.
+- Todas las consultas filtran por perfil. Demostración y SANDBOX no se mezclan (`source`). «Borrar caché de este perfil» (`purgeSandboxProfile`) solo elimina perfiles `SANDBOX`.
+- Al vincular otra cuenta en el mismo teléfono, la caché anterior sigue cifrada pero **no es visible** desde la nueva identidad (prueba E2E de aislamiento).
+
+### Fecha escolar y reloj
+
+- Regla de la escuela: `America/Mazatlan`, lunes a viernes; el servidor decide «hoy». La app guarda la **fecha escolar confirmada por el servidor** y la hora del último contacto; el reloj del teléfono no es autoridad.
+- Sin red se usa la fecha del dispositivo **solo para abrir el borrador de hoy**, y la pantalla avisa «fecha no confirmada por el servidor» (`offline-date-unconfirmed`). En fin de semana no se abren listas nuevas.
+- `ProfileAccessGate` mantiene una marca de agua (`highWater`) del reloj: si `ahora < marca - 2 min` el perfil queda bloqueado por **reloj sospechoso** (`CLOCK_SUSPECT`). Adelantar el reloj puede **agotar** la vigencia (bloquea antes), pero no la alarga. Cambiar la hora manualmente hacia atrás no reabre borradores de otros días ni extiende la vigencia; se corrige reconectando. No hay corrección histórica de días pasados.
+
+### Vigencia offline provisional (SANDBOX)
+
+- Vigencia corta configurable solo en debug (`-Peta15.offlineValidityMinutes`, 30 min por defecto; release = 0 porque no existe la función). Es una **simulación de pruebas**, no una política: la duración real es una decisión institucional pendiente.
+- Al vencer se **bloquean las consultas protegidas** (grupos, padrón, apertura y marcas) y se muestra «Acceso offline vencido: se requiere reconexión». **No se borran los borradores**; no se confunde con la sesión móvil ni con la vinculación del dispositivo (son controles independientes). El cifrado y el aislamiento siguen activos.
+
+### Revocaciones y cambios de padrón
+
+| Evento                                        | Con red                                                                                                                                            | Sin red                                                               |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Grupo desasignado / grupo o ciclo desactivado | Al descargar, el grupo pasa a `REVOKED`: padrón oculto, no se captura                                                                              | **No se puede saber**: la caché sigue válida hasta vencer la vigencia |
+| Rol revocado o cuenta deshabilitada           | `403`/`NOT_ELIGIBLE`: perfil bloqueado (`ACCOUNT_BLOCKED`)                                                                                         | Igual: sin conocimiento hasta reconectar                              |
+| Dispositivo revocado                          | `401 DEVICE_REVOKED`: perfil bloqueado                                                                                                             | Igual                                                                 |
+| Traslado, baja, alumno nuevo, cambio de ciclo | Nueva huella del padrón; los borradores con otra huella quedan `needsReview` (`ROSTER_CHANGED`) sin tocar sus marcas; las bajas pasan a `active=0` | —                                                                     |
+| Descarga repetida / interrumpida              | Idempotente por `@Upsert`; la interrumpida no deja estado parcial                                                                                  | —                                                                     |
+
+En todos los casos los borradores se **conservan** (se marcan para revisión) y la app **no ordena borrado remoto**: no existe borrado remoto. Revocar no puede alcanzar a un teléfono apagado o sin red; el límite real de exposición es la vigencia offline (a definir). Un grupo cuya asignación se pierde conserva el borrador local, pero la captura queda bloqueada hasta que Dirección decida qué hacer con él.
+
+### Identificadores de operación (preparación, sin envío)
+
+Cada borrador conserva su `requestId` estable (ya existente) y ahora la huella del padrón usado, para poder repetir un envío idempotente en el futuro. **No** se implementó `POST` de asistencia, reintentos, WorkManager, resolución de `409`, finalización remota ni reglas de captura tardía.
+
+### Interfaz
+
+Aviso permanente «DATOS DE PRUEBA DESCARGADOS (SANDBOX)», última actualización, vigencia, fecha no confirmada, grupos con etiqueta de «revocado» o «padrón por revisar», pantalla de acceso bloqueado por motivo (vigencia vencida, dispositivo revocado, cuenta bloqueada, reloj inconsistente) con «Volver», botones de descarga/«abrir sin conexión»/«borrar caché» en la pantalla de vinculación. La demostración local sigue separada y no muestra nada de la caché. No hay un inicio de sesión escolar falso. Nunca se usan los textos «Sincronizada», «Enviada», «Finalizada oficialmente» ni «Registrada por la escuela».
+
+### FUNCIONA / NO FUNCIONA TODAVÍA / NO APROBADO
+
+- **Funciona (solo debug + sandbox con datos ficticios)**: descarga mínima autorizada en una transacción; caché cifrada que sobrevive al reinicio del proceso; apertura de grupos/padrón y captura Presente/Ausente/Pendiente en modo avión; bloqueo por vigencia vencida, reloj sospechoso, dispositivo revocado y cuenta bloqueada; grupos revocados detectados al reconectar; padrón cambiado marcado para revisión; aislamiento entre cuentas; el release sigue sin `INTERNET` ni cliente de red.
+- **No funciona todavía**: envío/sincronización de asistencia, reintentos, finalización oficial, correcciones, captura tardía, borrado remoto, detección de revocaciones sin red, actualización forzada, MFA y atestación del dispositivo, programación automática de descargas.
+- **No aprobado**: la autenticación móvil (ADR 0005 propuesto), la vigencia offline de la escuela, la retención de la caché tras revocar, el uso con datos reales y cualquier distribución de APK.
+
+### Resultados de pruebas (2026-10-27)
+
+| Prueba                                                                                     | Resultado                                  |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------ |
+| `testDebugUnitTest` / `testReleaseUnitTest`                                                | 82 / 44, 0 fallos                          |
+| `connectedDebugAndroidTest` (emulador `Medium_Phone_API_36.1`)                             | 105 ejecutadas, 0 fallos, 2 omitidas (E2E) |
+| `lintDebug`, `lintRelease`, `assembleDebug`, `assembleRelease`                             | compilan, sin errores                      |
+| E2E offline contra el sandbox (`-e e2e offline`, guion externo con modo avión y reinicios) | 17/17                                      |
+
+Las instrumentadas nuevas cubren: persistencia tras reabrir la base cifrada, ausencia de texto claro en el archivo, clave perdida y base corrupta que **fallan cerrado**, conversión de v1 plana, migración 1→2 con datos, y los estados de interfaz. Las JVM cubren validación de la descarga (UUID, duplicados, límites, grupo ajeno, 404), cuenta equivocada, sesión vencida, vigencia vencida, reloj atrasado, fin de semana y cambios de grupo/ciclo. El E2E verifica: vinculación y descarga de 2 grupos, red apagada + proceso reiniciado + captura, persistencia en otro proceso nuevo, reconexión sin perder el borrador, revocación del grupo A desde el portal y su detección, segunda cuenta con un grupo y aislamiento, y **cero peticiones `/attendance`** en el registro del servidor.
+
+Limitaciones: un solo emulador (x86_64, API 36), sin dispositivo físico, sin StrongBox; el ajuste manual del reloj del dispositivo se cubre con pruebas de unidad (reloj inyectado), no moviendo el reloj del emulador.
+
+### Contratos que faltan en el backend (para el futuro protocolo de sincronización)
+
+Versión o ETag del padrón (hoy se calcula una huella en el cliente), fecha escolar en cada respuesta (hoy `asOf` del padrón), `POST` idempotente de asistencia por `requestId` con control de revisión, política para listas ya finalizadas por otra prefecta, reglas de captura tardía, canal para avisar revocaciones en la próxima conexión y límites del tamaño de lote. Ninguno se implementó.
 
 ## Compilar, ejecutar y probar (PowerShell)
 
@@ -224,4 +307,4 @@ Limitaciones de esta verificación: un solo emulador (x86_64, API 36); no se pro
 
 ## Pendientes (no implementados a propósito)
 
-Aprobación de la autenticación móvil (ADR 0005, hoy prototipo aislado) y su paso a producción; exigir PIN/huella a la clave y atestación; descarga de grupos autorizados y del padrón; sincronización y resolución de conflictos; finalización oficial; verificación de dependencias de Gradle y aviso de terceros del binario nativo; firma release y distribución del APK; logotipo oficial; calendario no lectivo; reglas de captura tardía y correcciones (decisiones institucionales en [diseno-asistencia-diaria.md](diseno-asistencia-diaria.md)).
+Aprobación de la autenticación móvil (ADR 0005, hoy prototipo aislado) y su paso a producción; exigir PIN/huella a la clave y atestación; vigencia offline y retención institucionales (la descarga de grupos y padrón existe solo como prototipo SANDBOX, ver arriba); sincronización y resolución de conflictos; finalización oficial; verificación de dependencias de Gradle y aviso de terceros del binario nativo; firma release y distribución del APK; logotipo oficial; calendario no lectivo; reglas de captura tardía y correcciones (decisiones institucionales en [diseno-asistencia-diaria.md](diseno-asistencia-diaria.md)).

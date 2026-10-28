@@ -73,6 +73,14 @@ fun CaptureScreen(
             modifier = Modifier.padding(contentPadding),
             actions = { TextButton(onClick = onBack) { Text(stringResource(R.string.action_back)) } },
         )
+        is CaptureUiState.Blocked -> AccessBlockedView(state.reason, onBack, Modifier.padding(contentPadding))
+        CaptureUiState.GroupRevoked -> MessageView(
+            title = stringResource(R.string.offline_group_revoked_title),
+            detail = stringResource(R.string.offline_group_revoked_detail),
+            isError = true,
+            modifier = Modifier.padding(contentPadding),
+            actions = { TextButton(onClick = onBack) { Text(stringResource(R.string.action_back)) } },
+        )
         is CaptureUiState.Ready -> CaptureContent(state.draft, onMark, onSummary, contentPadding)
     }
 }
@@ -128,6 +136,7 @@ private fun CaptureHeader(draft: DraftState, summary: DraftSummary) {
             style = MaterialTheme.typography.bodyMedium,
         )
         LocalSaveBadge(Modifier.testTag("saved-locally-badge"))
+        if (draft.needsReview) InfoNotice(stringResource(R.string.offline_review_notice), Modifier.testTag("draft-needs-review"))
         val progressText = stringResource(R.string.capture_progress, summary.marked, summary.total)
         // Region viva: los lectores de pantalla anuncian los cambios de conteo sin mover el foco.
         Column(Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {

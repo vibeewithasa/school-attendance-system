@@ -46,6 +46,8 @@ import java.time.format.FormatStyle
 import java.util.Locale
 import mx.edu.eta15.prefectura.BuildConfig
 import mx.edu.eta15.prefectura.R
+import mx.edu.eta15.prefectura.data.OfflineSink
+import mx.edu.eta15.prefectura.data.SandboxIds
 import mx.edu.eta15.prefectura.ui.EtaScaffold
 import mx.edu.eta15.prefectura.ui.InfoNotice
 
@@ -67,22 +69,26 @@ object MobileFeature {
         ) { Text(stringResource(R.string.mobile_home_button)) }
     }
 
+    /** Perfil local de la cache descargada de ESTE dispositivo vinculado (`null` si aun no hay identificador de dispositivo). */
+    fun sandboxProfileId(context: Context): String? =
+        FileLinkStore(context.applicationContext.noBackupFilesDir).load()?.deviceId?.let(SandboxIds::profile)
+
     @Composable
-    fun Screen(onBack: () -> Unit) {
+    fun Screen(onBack: () -> Unit, cache: OfflineSink? = null, onOpenOffline: () -> Unit = {}) {
         val context = LocalContext.current.applicationContext
-        val vm: MobileLinkViewModel = viewModel(factory = viewModelFactory { initializer { MobileLinkViewModel(context) } })
+        val vm: MobileLinkViewModel = viewModel(factory = viewModelFactory { initializer { MobileLinkViewModel(context, cache) } })
         val state by vm.controller.state.collectAsStateWithLifecycle()
         DisposableEffect(vm) {
             vm.controller.start()
             onDispose { vm.controller.stop() }
         }
         EtaScaffold(title = stringResource(R.string.mobile_title), onBack = onBack) { padding ->
-            MobileLinkScreen(state, vm.controller, padding)
+            MobileLinkScreen(state, vm.controller, padding, onOpenOffline)
         }
     }
 }
 
-class MobileLinkViewModel(context: Context) : ViewModel() {
+class MobileLinkViewModel(context: Context, cache: OfflineSink? = null) : ViewModel() {
     val controller: MobileLinkController
 
     init {
@@ -92,6 +98,7 @@ class MobileLinkViewModel(context: Context) : ViewModel() {
             store = FileLinkStore(context.noBackupFilesDir),
             apiFor = { jwk -> HttpMobileApi(BuildConfig.MOBILE_BASE_URL, DpopProofBuilder(jwk, key::signDer), jwk) },
             scope = viewModelScope,
+            cache = cache,
         )
     }
 
@@ -105,7 +112,12 @@ private val Mono = FontFamily.Monospace
 
 /** Contenido de la pantalla; recibe el estado y el controlador para poder probarse con controladores falsos. */
 @Composable
-fun MobileLinkScreen(state: MobileUiState, controller: MobileLinkController, contentPadding: PaddingValues) {
+fun MobileLinkScreen(
+    state: MobileUiState,
+    controller: MobileLinkController,
+    contentPadding: PaddingValues,
+    onOpenOffline: () -> Unit = {},
+) {
     Column(
         Modifier
             .padding(contentPadding)
@@ -121,7 +133,7 @@ fun MobileLinkScreen(state: MobileUiState, controller: MobileLinkController, con
             Stage.NOT_LINKED -> NotLinked(state, controller)
             Stage.KEY_LOST -> KeyLost(controller)
             Stage.PAIRING -> Pairing(state, controller)
-            Stage.LINKED -> Linked(state, controller)
+            Stage.LINKED -> Linked(state, controller, onOpenOffline)
         }
     }
 }
@@ -251,7 +263,7 @@ private fun KeyLost(controller: MobileLinkController) {
 }
 
 @Composable
-private fun Linked(state: MobileUiState, controller: MobileLinkController) {
+private fun Linked(state: MobileUiState, controller: MobileLinkController, onOpenOffline: () -> Unit) {
     Text(stringResource(R.string.mobile_linked_title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag("mobile-linked"))
     Text(if (state.owner != null) stringResource(R.string.mobile_owner, state.owner) else stringResource(R.string.mobile_owner_unknown))
     state.label?.let { Text(stringResource(R.string.mobile_device_label, it)) }
@@ -294,6 +306,20 @@ private fun Linked(state: MobileUiState, controller: MobileLinkController) {
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("mobile-close-session"),
         ) { Text(stringResource(R.string.mobile_close_session)) }
     }
+    if (session != null) {
+        // Descarga autorizada hacia la cache CIFRADA: solo mis grupos y el padron de cada uno (nada de grupos ajenos).
+        Button(
+            onClick = controller::downloadAuthorized,
+            enabled = !state.busy,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("mobile-download"),
+        ) { Text(stringResource(R.string.mobile_download_button)) }
+    }
+    DownloadStatus(state)
+    OutlinedButton(
+        onClick = onOpenOffline,
+        enabled = !state.busy,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("mobile-open-offline"),
+    ) { Text(stringResource(R.string.mobile_open_offline_button)) }
     state.groups?.let { groups ->
         Text(stringResource(R.string.mobile_groups_title), style = MaterialTheme.typography.titleMedium)
         InfoNotice(stringResource(R.string.mobile_readonly_notice))
@@ -313,7 +339,48 @@ private fun Linked(state: MobileUiState, controller: MobileLinkController) {
         TextButton(onClick = controller::closeRoster) { Text(stringResource(R.string.mobile_roster_close)) }
     }
     HorizontalDivider()
+    PurgeButton(controller, enabled = !state.busy)
     ForgetButton(controller, enabled = !state.busy)
+}
+
+@Composable
+private fun PurgeButton(controller: MobileLinkController, enabled: Boolean) {
+    var confirm by remember { mutableStateOf(false) }
+    OutlinedButton(
+        onClick = { confirm = true },
+        enabled = enabled,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("mobile-purge"),
+    ) { Text(stringResource(R.string.mobile_purge_button)) }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text(stringResource(R.string.mobile_purge_title)) },
+            text = { Text(stringResource(R.string.mobile_purge_text)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirm = false
+                        controller.purgeCache()
+                    },
+                    modifier = Modifier.testTag("mobile-purge-confirm"),
+                ) { Text(stringResource(R.string.mobile_purge_yes)) }
+            },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text(stringResource(R.string.action_cancel)) } },
+        )
+    }
+}
+
+@Composable
+private fun DownloadStatus(state: MobileUiState) {
+    val text = when (val d = state.download) {
+        null -> if (state.busy) stringResource(R.string.mobile_download_busy) else stringResource(R.string.mobile_download_none)
+        is DownloadOutcome.Complete -> stringResource(R.string.mobile_download_ok, d.groups, d.revoked)
+        DownloadOutcome.Incomplete -> stringResource(R.string.mobile_download_incomplete)
+        DownloadOutcome.Invalid -> stringResource(R.string.mobile_download_invalid)
+        is DownloadOutcome.Blocked -> stringResource(R.string.mobile_download_incomplete)
+        DownloadOutcome.NoDevice -> stringResource(R.string.mobile_download_incomplete)
+    }
+    Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("mobile-download-status"))
 }
 
 @Composable

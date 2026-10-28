@@ -7,12 +7,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -33,6 +35,16 @@ object Routes {
     const val ROSTER = "roster/{groupId}"
     const val CAPTURE = "capture/{groupId}"
     const val SUMMARY = "summary/{groupId}"
+
+    // Grupos DESCARGADOS del servidor de pruebas (SANDBOX): otro perfil y otro repositorio que la demostracion local.
+    const val SBX_GROUPS = "sbx"
+    const val SBX_ROSTER = "sbx/roster/{groupId}"
+    const val SBX_CAPTURE = "sbx/capture/{groupId}"
+    const val SBX_SUMMARY = "sbx/summary/{groupId}"
+
+    fun sbxRoster(groupId: String) = "sbx/roster/$groupId"
+    fun sbxCapture(groupId: String) = "sbx/capture/$groupId"
+    fun sbxSummary(groupId: String) = "sbx/summary/$groupId"
 
     fun roster(groupId: String) = "roster/$groupId"
     fun capture(groupId: String) = "capture/$groupId"
@@ -102,32 +114,13 @@ private fun EtaNavHost(
         }
         composable(Routes.CAPTURE, arguments = groupArg) { entry ->
             val groupId = entry.arguments?.getString("groupId").orEmpty()
-            val vm: CaptureViewModel = viewModel(key = "capture-$groupId", factory = factory { CaptureViewModel(repo, groupId) })
-            val state by vm.state.collectAsStateWithLifecycle()
-            val message by vm.message.collectAsStateWithLifecycle()
-            val snackbar = remember { SnackbarHostState() }
-            val text = when (message) {
-                CaptureMessage.DraftNotEditable -> stringResource(R.string.capture_msg_not_editable)
-                CaptureMessage.NotFound -> stringResource(R.string.capture_msg_not_found)
-                CaptureMessage.SaveFailed -> stringResource(R.string.capture_msg_save_failed)
-                null -> null
-            }
-            LaunchedEffect(message) {
-                if (text != null) {
-                    snackbar.showSnackbar(text)
-                    vm.consumeMessage()
-                }
-            }
-            val title = (state as? CaptureUiState.Ready)?.draft?.groupName ?: stringResource(R.string.capture_title)
-            EtaScaffold(title = title, onBack = { navController.popBackStack() }, snackbarHostState = snackbar) { padding ->
-                CaptureScreen(
-                    state = state,
-                    onMark = vm::setMark,
-                    onSummary = { navController.navigate(Routes.summary(groupId)) },
-                    onBack = { navController.popBackStack() },
-                    contentPadding = padding,
-                )
-            }
+            CaptureRoute(
+                repo = repo,
+                groupId = groupId,
+                keyPrefix = "capture",
+                onSummary = { navController.navigate(Routes.summary(groupId)) },
+                onBack = { navController.popBackStack() },
+            )
         }
         composable(Routes.SUMMARY, arguments = groupArg) { entry ->
             val groupId = entry.arguments?.getString("groupId").orEmpty()
@@ -139,7 +132,14 @@ private fun EtaNavHost(
         }
         // Vinculacion experimental con el servidor de pruebas: solo existe en debug (en release la ruta no se registra).
         if (MobileFeature.AVAILABLE) {
-            composable(Routes.MOBILE) { MobileFeature.Screen(onBack = { navController.popBackStack() }) }
+            composable(Routes.MOBILE) {
+                MobileFeature.Screen(
+                    onBack = { navController.popBackStack() },
+                    cache = container.offlineCache,
+                    onOpenOffline = { navController.navigate(Routes.SBX_GROUPS) },
+                )
+            }
+            sandboxGraph(container, navController)
         }
         composable(Routes.CONNECTIVITY) {
             val vm: ConnectivityViewModel = viewModel(factory = factory { ConnectivityViewModel(container.networkMonitor, encryption) })
@@ -157,5 +157,104 @@ private fun EtaNavHost(
                 )
             }
         }
+    }
+}
+
+// ============================== Grupos descargados (SANDBOX) ==============================
+
+/**
+ * Pantallas de los grupos DESCARGADOS del servidor de pruebas. Reutilizan las mismas pantallas que la demostracion pero con el
+ * repositorio del perfil SANDBOX del dispositivo vinculado (otro perfil, vigencia offline y revocaciones). Funcionan sin
+ * internet: solo leen Room; ninguna llama al servidor.
+ */
+private fun NavGraphBuilder.sandboxGraph(container: AppContainer, navController: NavHostController) {
+    composable(Routes.SBX_GROUPS) {
+        WithSandboxRepo(container, navController, R.string.offline_groups_title) { repo, padding ->
+            val vm: GroupsViewModel = viewModel(key = "sbx-groups", factory = factory { GroupsViewModel(repo) })
+            val state by vm.state.collectAsStateWithLifecycle()
+            GroupsScreen(state, onOpenGroup = { navController.navigate(Routes.sbxRoster(it)) }, contentPadding = padding)
+        }
+    }
+    composable(Routes.SBX_ROSTER, arguments = groupArg) { entry ->
+        val groupId = entry.arguments?.getString("groupId").orEmpty()
+        WithSandboxRepo(container, navController, R.string.roster_title) { repo, padding ->
+            val vm: RosterViewModel = viewModel(key = "sbx-roster-$groupId", factory = factory { RosterViewModel(repo, groupId) })
+            val state by vm.state.collectAsStateWithLifecycle()
+            RosterScreen(state, onCapture = { navController.navigate(Routes.sbxCapture(groupId)) }, contentPadding = padding)
+        }
+    }
+    composable(Routes.SBX_CAPTURE, arguments = groupArg) { entry ->
+        val groupId = entry.arguments?.getString("groupId").orEmpty()
+        WithSandboxRepo(container, navController, R.string.capture_title, scaffold = false) { repo, _ ->
+            CaptureRoute(
+                repo = repo,
+                groupId = groupId,
+                keyPrefix = "sbx-capture",
+                onSummary = { navController.navigate(Routes.sbxSummary(groupId)) },
+                onBack = { navController.popBackStack() },
+            )
+        }
+    }
+    composable(Routes.SBX_SUMMARY, arguments = groupArg) { entry ->
+        val groupId = entry.arguments?.getString("groupId").orEmpty()
+        WithSandboxRepo(container, navController, R.string.summary_title) { repo, padding ->
+            val vm: SummaryViewModel = viewModel(key = "sbx-summary-$groupId", factory = factory { SummaryViewModel(repo, groupId) })
+            val state by vm.state.collectAsStateWithLifecycle()
+            SummaryScreen(state, onContinue = { navController.popBackStack() }, contentPadding = padding)
+        }
+    }
+}
+
+@Composable
+private fun WithSandboxRepo(
+    container: AppContainer,
+    navController: NavHostController,
+    title: Int,
+    scaffold: Boolean = true,
+    content: @Composable (AttendanceRepository, androidx.compose.foundation.layout.PaddingValues) -> Unit,
+) {
+    val context = LocalContext.current.applicationContext
+    val repo = remember { MobileFeature.sandboxProfileId(context)?.let(container::sandboxRepository) }
+    if (repo != null && !scaffold) {
+        content(repo, androidx.compose.foundation.layout.PaddingValues())
+        return
+    }
+    EtaScaffold(title = stringResource(title), onBack = { navController.popBackStack() }) { padding ->
+        if (repo == null) {
+            MessageView(
+                title = stringResource(R.string.offline_none_title),
+                detail = stringResource(R.string.offline_none_detail),
+                modifier = Modifier.padding(padding),
+            )
+        } else {
+            content(repo, padding)
+        }
+    }
+}
+
+/** Captura de un grupo (demostracion o descargado): el mismo flujo, con avisos de guardado, bloqueo y revocacion. */
+@Composable
+private fun CaptureRoute(repo: AttendanceRepository, groupId: String, keyPrefix: String, onSummary: () -> Unit, onBack: () -> Unit) {
+    val vm: CaptureViewModel = viewModel(key = "$keyPrefix-$groupId", factory = factory { CaptureViewModel(repo, groupId) })
+    val state by vm.state.collectAsStateWithLifecycle()
+    val message by vm.message.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    val text = when (message) {
+        CaptureMessage.DraftNotEditable -> stringResource(R.string.capture_msg_not_editable)
+        CaptureMessage.NotFound -> stringResource(R.string.capture_msg_not_found)
+        CaptureMessage.SaveFailed -> stringResource(R.string.capture_msg_save_failed)
+        CaptureMessage.AccessBlocked -> stringResource(R.string.capture_msg_access_blocked)
+        CaptureMessage.GroupRevoked -> stringResource(R.string.capture_msg_group_revoked)
+        null -> null
+    }
+    LaunchedEffect(message) {
+        if (text != null) {
+            snackbar.showSnackbar(text)
+            vm.consumeMessage()
+        }
+    }
+    val title = (state as? CaptureUiState.Ready)?.draft?.groupName ?: stringResource(R.string.capture_title)
+    EtaScaffold(title = title, onBack = onBack, snackbarHostState = snackbar) { padding ->
+        CaptureScreen(state = state, onMark = vm::setMark, onSummary = onSummary, onBack = onBack, contentPadding = padding)
     }
 }

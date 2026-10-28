@@ -208,4 +208,44 @@ class ProjectSecurityTest {
         assertTrue(secure.contains("SECURE_NAME = \"eta15_secure.db\""))
         assertTrue(secure.contains("LEGACY_NAME = \"eta15_local.db\""))
     }
+
+    @Test
+    fun `la cache offline no usa red, no sincroniza solo y no envia asistencia`() {
+        // El codigo comun (debug Y release) no tiene cliente de red ni programadores de envio en segundo plano.
+        val common = sourceFiles("src/main").filter { it.extension == "kt" }.joinToString("\n") { it.readText() }
+        assertFalse(
+            "sin cliente HTTP en el codigo comun",
+            Regex("""HttpURLConnection|java.net.URL|OkHttp|Retrofit|openConnection""").containsMatchIn(common),
+        )
+        assertFalse(
+            "sin sincronizacion automatica",
+            Regex("""WorkManager|JobScheduler|AlarmManager|SyncAdapter|PeriodicWorkRequest""").containsMatchIn(common),
+        )
+        // El cliente de PRUEBAS (solo debug) solo conoce las dos lecturas autorizadas: ninguna ruta ni metodo de asistencia.
+        val debug = sourceFiles("src/debug").filter { it.extension == "kt" }.joinToString("\n") { it.readText() }
+        assertFalse("el cliente de pruebas no conoce ninguna ruta de asistencia", Regex("""/attendance|school/attendance""").containsMatchIn(debug))
+        val api = file("src/debug/java/mx/edu/eta15/prefectura/mobile/MobileApi.kt").readText()
+        assertFalse("la interfaz del servidor de pruebas no tiene operaciones de asistencia", api.contains("ttendance"))
+        assertTrue(api.contains("suspend fun myGroups") && api.contains("suspend fun roster"))
+    }
+
+    @Test
+    fun `REPLACE nunca se usa en la cache porque borraria en cascada borradores y marcas`() {
+        val daos = file("src/main/java/mx/edu/eta15/prefectura/data/local/Daos.kt").readText()
+        assertFalse(daos.contains("OnConflictStrategy.REPLACE"))
+        assertTrue("la cache usa @Upsert", daos.contains("@Upsert"))
+        // el unico borrado de datos descargados es explicito y solo de perfiles SANDBOX
+        assertTrue(daos.contains("DELETE FROM profiles WHERE id = :profileId AND source = 'SANDBOX'"))
+    }
+
+    @Test
+    fun `la interfaz de la cache nunca dice enviada ni sincronizada`() {
+        val strings = file("src/main/res/values/strings.xml").readText()
+        val offline = Regex("""<string name="(offline_|mobile_download|mobile_open_offline|mobile_purge)[^"]*">([^<]*)</string>""")
+            .findAll(strings).joinToString("\n") { it.groupValues[2] }
+        assertTrue(offline.isNotBlank())
+        // se permite negar ("no se envia"); nunca afirmar un envio, una sincronizacion o un registro oficial
+        assertFalse(Regex("""(?i)sincronizad[ao]|enviad[ao]|registrad[ao] por la escuela|finalizad[ao] oficialmente""").containsMatchIn(offline))
+        assertTrue(strings.contains("GUARDADA EN ESTE DISPOSITIVO"))
+    }
 }

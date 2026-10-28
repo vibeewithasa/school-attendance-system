@@ -88,6 +88,7 @@ class SecureStorage(
         val factory = SupportOpenHelperFactory(rawKeyPassphrase(key))
         val db = Room.databaseBuilder(context, EtaDatabase::class.java, name)
             .openHelperFactory(factory)
+            .addMigrations(EtaDatabase.MIGRATION_1_2)
             .addCallback(EtaDatabase.integrityCallback)
             .build()
         try {
@@ -114,21 +115,26 @@ class SecureStorage(
             throw StorageException.ConversionFailed("No se pudo leer la base anterior", e)
         }
         try {
-            if (source.version != EXPECTED_LEGACY_VERSION) {
+            if (source.version !in LEGACY_VERSIONS) {
                 throw StorageException.UnknownLegacyFormat("La base anterior tiene una version de esquema desconocida: no se modifica")
             }
             if (!pragmaIsOk(source, "PRAGMA integrity_check")) {
                 throw StorageException.ConversionFailed("La base anterior no pasa la comprobacion de integridad")
             }
-            val sourceDigests = TABLES.associateWith { digest(source, it) }
-            val sourceCounts = TABLES.associateWith { count(source, it.name) }
+            // v1 = instalaciones de la etapa 1; v2 solo existe para pruebas (la cache offline v2 nace ya cifrada).
+            val tables = if (source.version >= 2) TABLES + TABLES_V2 else TABLES
+            // La verificacion compara SOLO las columnas que existian en la base anterior: la v2 agrega columnas con valor por
+            // omision (no son parte de lo que se convierte) y no deben hacer fallar la comparacion de contenido.
+            val columns = tables.associateWith { columnsOf(source, it.name) }
+            val sourceDigests = tables.associateWith { digest(source, it, columns.getValue(it)) }
+            val sourceCounts = tables.associateWith { count(source, it.name) }
 
             val target = openRoom(tmpName, key)
             try {
                 val dst = target.openHelper.writableDatabase
                 dst.beginTransaction()
                 try {
-                    for (t in TABLES) copyTable(source, dst, t)
+                    for (t in tables) copyTable(source, dst, t)
                     dst.setTransactionSuccessful()
                 } finally {
                     dst.endTransaction()
@@ -147,12 +153,12 @@ class SecureStorage(
                 dst.query("PRAGMA integrity_check").use { c ->
                     if (!c.moveToFirst() || c.getString(0) != "ok") throw StorageException.ConversionFailed("La copia cifrada no pasa la integridad")
                 }
-                for (t in TABLES) {
+                for (t in tables) {
                     val n = dst.query("SELECT COUNT(*) FROM ${t.name}").use { c -> c.moveToFirst(); c.getInt(0) }
                     if (n != sourceCounts.getValue(t)) throw StorageException.ConversionFailed("Conteo distinto en ${t.name}")
                 }
-                for (t in TABLES) {
-                    if (!digestOf(dst.query(selectAll(t)), t).contentEquals(sourceDigests.getValue(t))) {
+                for (t in tables) {
+                    if (!digestOf(dst.query(selectAll(t, columns.getValue(t))), t).contentEquals(sourceDigests.getValue(t))) {
                         throw StorageException.ConversionFailed("El contenido de ${t.name} no coincide")
                     }
                 }
@@ -178,7 +184,11 @@ class SecureStorage(
 
     private data class Table(val name: String, val orderBy: String)
 
-    private fun selectAll(t: Table) = "SELECT * FROM ${t.name} ORDER BY ${t.orderBy}"
+    private fun selectAll(t: Table, columns: List<String>? = null) =
+        "SELECT ${columns?.joinToString(", ") ?: "*"} FROM ${t.name} ORDER BY ${t.orderBy}"
+
+    private fun columnsOf(db: SQLiteDatabase, table: String): List<String> =
+        db.rawQuery("PRAGMA table_info($table)", null).use { c -> buildList { while (c.moveToNext()) add(c.getString(1)) } }
 
     private fun copyTable(source: SQLiteDatabase, dst: androidx.sqlite.db.SupportSQLiteDatabase, t: Table) {
         source.rawQuery(selectAll(t), null).use { c ->
@@ -207,7 +217,8 @@ class SecureStorage(
     private fun pragmaIsOk(db: SQLiteDatabase, sql: String): Boolean =
         db.rawQuery(sql, null).use { it.moveToFirst() && it.getString(0) == "ok" }
 
-    private fun digest(db: SQLiteDatabase, t: Table): ByteArray = digestOf(db.rawQuery(selectAll(t), null), t)
+    private fun digest(db: SQLiteDatabase, t: Table, columns: List<String>): ByteArray =
+        digestOf(db.rawQuery(selectAll(t, columns), null), t)
 
     private fun digestOf(cursor: Cursor, @Suppress("UNUSED_PARAMETER") t: Table): ByteArray {
         val md = MessageDigest.getInstance("SHA-256")
@@ -245,7 +256,7 @@ class SecureStorage(
         /** Base anterior SIN cifrar de las instalaciones debug de la etapa 1 (solo datos de demostracion). */
         const val LEGACY_NAME = "eta15_local.db"
 
-        private const val EXPECTED_LEGACY_VERSION = 1
+        private val LEGACY_VERSIONS = 1..2
 
         // Orden de copia = orden de dependencias de llaves foraneas.
         private val TABLES = listOf(
@@ -254,6 +265,12 @@ class SecureStorage(
             Table("students", "id"),
             Table("attendance_drafts", "id"),
             Table("attendance_marks", "draftId, studentId"),
+        )
+
+        // Tablas de la v2 (cache offline), tambien en orden de dependencias.
+        private val TABLES_V2 = listOf(
+            Table("roster_snapshots", "groupId"),
+            Table("profile_sync", "profileId"),
         )
 
         private val PLAIN_HEADER = "SQLite format 3\u0000".toByteArray(Charsets.US_ASCII)

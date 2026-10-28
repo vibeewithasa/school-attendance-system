@@ -133,6 +133,15 @@ Acceso: solo `eta15_api` (escritura al crear la solicitud o la sesión) y el pro
 
 PGlite: 46 HTTP + 28 de migración + las de DPoP (la suite de la API completa: 907 pruebas, y 162 del portal); clúster PostgreSQL 18 desechable con `eta15_api` no propietaria y privilegios por columna (suite móvil completa con 0006, 21 de ejecución controlada de la propuesta 0006 y carreras con conexiones independientes: misma prueba en dos instancias a la vez, reinicio de instancia, revocación contra renovación, aprobación contra cancelación, falla real de PostgreSQL por retiro de privilegio, agotamiento y recuperación de cupos; 519 pruebas en el clúster desechable en total) y paridad exacta de las rutas web compartidas con y sin el canal móvil (9 rutas × 6 perfiles), CSRF/Origin y revocación web; guion adversarial vivo contra el sandbox (31/31); Android: 64 pruebas JVM de debug (10 de DPoP con vectores calculados por el servidor, 13 de la máquina de estados, 17 de política de seguridad), 41 de release, 75 instrumentadas (7 del Keystore real, 5 de interfaz) y una prueba de extremo a extremo en el emulador (Keystore real + HTTP real a `10.0.2.2` + guion web): vincular, aprobar, abrir sesión, leer grupos y padrón, revocar y olvidar.
 
+### Caché offline de grupos autorizados (etapa 3, rama `feat/android-offline-cache`, 2026-10-27)
+
+Sobre este prototipo (solo debug y sandbox, datos ficticios) la app descarga los grupos y padrones **autorizados** por `/mobile/school/*` a la base cifrada y permite capturar sin internet; no envía asistencia. Esto **no cambia el estado de la decisión: sigue PROPUESTA**. Lo que la etapa 3 aporta a la discusión:
+
+- **Revocación offline**: el servidor no puede alcanzar un teléfono sin red. La revocación de grupo, rol, cuenta o dispositivo se **detecta al reconectar** (bloqueo local, borradores conservados, sin borrado remoto). El único límite de exposición es la **vigencia offline**, hoy una simulación SANDBOX de 30 minutos configurable solo en debug; la duración real (turno, día, semana), qué datos permanecen tras revocar y si se exige borrado remoto son **decisiones institucionales pendientes** (ver «Decisiones pendientes»).
+- **Reloj**: la vigencia usa el reloj del dispositivo con una marca de agua; un reloj retrasado bloquea (`CLOCK_SUSPECT`) y uno adelantado agota la vigencia antes. La fecha escolar autoritativa es la del último contacto con el servidor.
+- **Aislamiento**: perfil `sbx.<deviceId>` con el identificador entregado por el servidor; otra cuenta en el mismo teléfono no ve la caché anterior.
+- **Contratos que faltan** para sincronizar: versión del padrón, fecha escolar en cada respuesta, envío idempotente por `requestId`, política de listas ya finalizadas, captura tardía y aviso de revocación. Detalle en [android-prefectura.md](../architecture/android-prefectura.md#caché-offline-de-grupos-autorizados-etapa-3-solo-sandbox-rama-featandroid-offline-cache).
+
 ## Lo que NO se hará (restricciones)
 
 - No desactivar CSRF ni la validación de `Origin` de la API web, ni falsificar `Origin` desde la app.
