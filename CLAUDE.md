@@ -82,6 +82,21 @@ Rama `main` protegida por convención; trabajo en ramas `feat/…`, `fix/…`, `
 Commits pequeños en imperativo (Conventional Commits recomendado). No hacer push, commit ni PR sin que
 la persona responsable lo pida.
 
+### Git y GitHub
+
+Remoto único: `origin`, repositorio **privado** `vibeewithasa/ETA15`. Nunca hacerlo público ni usar otro remoto.
+
+1. Cada funcionalidad vive en su propia rama; los prototipos con riesgo de seguridad no se fusionan a `main`
+   sin revisión de seguridad propia.
+2. Antes de cada commit: `typecheck`, `lint` y `test` en verde (sección 9).
+3. Antes de cada push: revisar `git diff` y buscar secretos en lo que se publica (se publica el historial, no solo el último estado).
+4. Se publica una rama de trabajo cuando el trabajo está revisado; se publica de forma explícita (`git push -u origin <rama>`), nunca `--all`, tags ni ramas sin auditar.
+5. Integrar a `main` por PR o fast-forward; después publicar `main`. El PR no se fusiona automáticamente.
+6. Un push no autoriza aplicar migraciones ni privilegios a ninguna base, ni significa aprobación para producción (sección 8).
+7. Prohibido `push --force` y reescribir historial ya publicado; los errores se corrigen con un commit nuevo.
+8. Nunca versionar contraseñas, tokens, `.env*` reales, bases locales, respaldos (`pg_dump`), APK ni llaves (sección 5), ni datos reales de alumnos.
+9. Conservar la autoría real de los commits (sin `--reset-author` ni sustituir correos). Los commits describen cambios reales; no se crean para generar contribuciones.
+
 ## 8. Política de migraciones
 
 - Esquema en `apps/api/src/db/schema/`; migraciones generadas con `pnpm --filter @eta15/api db:generate`
