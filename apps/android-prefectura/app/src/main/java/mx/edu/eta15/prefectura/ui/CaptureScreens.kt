@@ -216,7 +216,12 @@ private fun StudentCaptureRow(row: CaptureRow, onMark: (AttendanceMark?) -> Unit
 // ============================== Resumen ==============================
 
 @Composable
-fun SummaryScreen(state: SummaryUiState, onContinue: () -> Unit, contentPadding: PaddingValues) {
+fun SummaryScreen(
+    state: SummaryUiState,
+    onContinue: () -> Unit,
+    contentPadding: PaddingValues,
+    onPrepare: (String) -> Unit = {},
+) {
     when (state) {
         SummaryUiState.Loading -> LoadingView(Modifier.padding(contentPadding))
         SummaryUiState.Error -> MessageView(
@@ -231,12 +236,13 @@ fun SummaryScreen(state: SummaryUiState, onContinue: () -> Unit, contentPadding:
             modifier = Modifier.padding(contentPadding),
             actions = { TextButton(onClick = onContinue) { Text(stringResource(R.string.action_back)) } },
         )
-        is SummaryUiState.Ready -> SummaryContent(state.draft, onContinue, contentPadding)
+        is SummaryUiState.Ready -> SummaryContent(state, onContinue, contentPadding, onPrepare)
     }
 }
 
 @Composable
-private fun SummaryContent(draft: DraftState, onContinue: () -> Unit, contentPadding: PaddingValues) {
+private fun SummaryContent(state: SummaryUiState.Ready, onContinue: () -> Unit, contentPadding: PaddingValues, onPrepare: (String) -> Unit) {
+    val draft = state.draft
     val s = draft.summary
     val pendingRows = draft.rows.filter { it.mark == null }
     LazyColumn(
@@ -271,6 +277,11 @@ private fun SummaryContent(draft: DraftState, onContinue: () -> Unit, contentPad
             )
         }
         item { InfoNotice(stringResource(R.string.summary_not_server)) }
+        state.outbox?.let { outbox ->
+            item {
+                OutboxSection(outbox, state.prepareMessage, enabled = !draft.needsReview || outbox.unsealedChanges, onPrepare = { onPrepare(draft.draftId) })
+            }
+        }
         if (pendingRows.isNotEmpty()) {
             item { Text(stringResource(R.string.summary_pending_list), style = MaterialTheme.typography.titleMedium) }
             items(pendingRows, key = { it.student.id }) { Text(it.student.displayName, style = MaterialTheme.typography.bodyLarge) }

@@ -3,8 +3,10 @@ package mx.edu.eta15.prefectura.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -22,6 +24,9 @@ import java.util.Locale
 import mx.edu.eta15.prefectura.R
 import mx.edu.eta15.prefectura.domain.AccessBlock
 import mx.edu.eta15.prefectura.domain.OfflineAccess
+import mx.edu.eta15.prefectura.domain.OperationKind
+import mx.edu.eta15.prefectura.domain.OperationState
+import mx.edu.eta15.prefectura.domain.OutboxSummary
 import mx.edu.eta15.prefectura.domain.SyncInfo
 
 private val StampFormat: DateTimeFormatter =
@@ -102,4 +107,70 @@ private fun blockedDetail(reason: AccessBlock): Int = when (reason) {
     AccessBlock.DEVICE_REVOKED -> R.string.offline_blocked_device_detail
     AccessBlock.ACCOUNT_BLOCKED -> R.string.offline_blocked_account_detail
     AccessBlock.CLOCK_SUSPECT -> R.string.offline_blocked_clock_detail
+}
+
+/**
+ * Preparacion local para una FUTURA sincronizacion (solo perfiles descargados del servidor de pruebas). Todo lo que muestra es local:
+ * nada se envia al servidor y no hay boton de envio. "Preparar" sella los cambios en una operacion guardada en este dispositivo.
+ */
+@Composable
+fun OutboxSection(
+    outbox: OutboxSummary,
+    message: PrepareMessage?,
+    enabled: Boolean,
+    onPrepare: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = modifier.testTag("outbox-section")) {
+        Text(stringResource(R.string.outbox_title), style = MaterialTheme.typography.titleMedium)
+        InfoNotice(stringResource(R.string.outbox_local_notice), Modifier.testTag("outbox-local-notice"))
+        Text(stringResource(R.string.outbox_marks, outbox.localMarks), modifier = Modifier.testTag("outbox-marks"))
+        Text(
+            stringResource(if (outbox.unsealedChanges) R.string.outbox_unsealed else R.string.outbox_all_prepared),
+            modifier = Modifier.testTag(if (outbox.unsealedChanges) "outbox-unsealed" else "outbox-sealed"),
+        )
+        Text(stringResource(R.string.outbox_operations, outbox.preparedOperations), modifier = Modifier.testTag("outbox-operations"))
+        outbox.operations.filter { !it.state.isTerminal || it.state == OperationState.ACKNOWLEDGED }.forEach { op ->
+            val label = if (op.kind == OperationKind.OPEN) {
+                stringResource(R.string.outbox_op_open)
+            } else {
+                stringResource(R.string.outbox_op_save, op.markCount)
+            }
+            val state = stringResource(
+                when (op.state) {
+                    OperationState.READY -> R.string.outbox_state_ready
+                    OperationState.WAITING_REMOTE_CONTEXT -> R.string.outbox_state_waiting
+                    OperationState.NEEDS_REVIEW, OperationState.CONFLICT -> R.string.outbox_state_review
+                    OperationState.AUTH_REQUIRED -> R.string.outbox_state_auth
+                    else -> R.string.outbox_state_other
+                },
+            )
+            Text("$label: $state", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("outbox-op-${op.kind.name}-${op.state.name}"))
+        }
+        message?.let {
+            InfoNotice(
+                stringResource(
+                    when (it) {
+                        PrepareMessage.Prepared -> R.string.outbox_msg_prepared
+                        PrepareMessage.AlreadyPrepared -> R.string.outbox_msg_already
+                        PrepareMessage.NothingToPrepare -> R.string.outbox_msg_nothing
+                        PrepareMessage.TooManyMarks -> R.string.outbox_msg_too_many
+                        PrepareMessage.InvalidIdentifier -> R.string.outbox_msg_invalid
+                        PrepareMessage.UnmarkAfterSend -> R.string.outbox_msg_unmark
+                        PrepareMessage.GroupRevoked -> R.string.outbox_msg_revoked
+                        PrepareMessage.AccessBlocked -> R.string.outbox_msg_blocked
+                        PrepareMessage.LocalError -> R.string.outbox_msg_local_error
+                        PrepareMessage.NotSandbox -> R.string.outbox_msg_not_sandbox
+                        PrepareMessage.DraftNotFound -> R.string.outbox_msg_not_found
+                    },
+                ),
+                Modifier.testTag("outbox-message"),
+            )
+        }
+        OutlinedButton(
+            onClick = onPrepare,
+            enabled = enabled && outbox.unsealedChanges,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("outbox-prepare"),
+        ) { Text(stringResource(R.string.outbox_prepare)) }
+    }
 }

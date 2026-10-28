@@ -88,7 +88,7 @@ class SecureStorage(
         val factory = SupportOpenHelperFactory(rawKeyPassphrase(key))
         val db = Room.databaseBuilder(context, EtaDatabase::class.java, name)
             .openHelperFactory(factory)
-            .addMigrations(EtaDatabase.MIGRATION_1_2)
+            .addMigrations(EtaDatabase.MIGRATION_1_2, EtaDatabase.MIGRATION_2_3)
             .addCallback(EtaDatabase.integrityCallback)
             .build()
         try {

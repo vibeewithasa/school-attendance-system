@@ -42,6 +42,12 @@ interface AttendanceRepository {
 
     /** Ultima descarga y ultimo contacto con el servidor; `null` en la demostracion local. */
     fun observeSyncInfo(): Flow<SyncInfo?> = flowOf(null)
+
+    /** Preparacion local de la sincronizacion del borrador de hoy del grupo (solo perfiles SANDBOX; `null` en la demostracion). */
+    fun observeOutbox(groupId: String): Flow<OutboxSummary?> = flowOf(null)
+
+    /** Sella los cambios locales en una operacion preparada. NO envia nada al servidor. */
+    suspend fun prepareForSync(draftId: String): PrepareResult = PrepareResult.Refused(Refusal.NotSandbox)
 }
 
 /** Decide si las consultas escolares protegidas de un perfil descargado estan permitidas ahora (ver ProfileAccessGate). */

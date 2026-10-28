@@ -29,6 +29,9 @@ import mx.edu.eta15.prefectura.domain.DraftState
 import mx.edu.eta15.prefectura.domain.Group
 import mx.edu.eta15.prefectura.domain.IdGenerator
 import mx.edu.eta15.prefectura.domain.OpenDraftResult
+import mx.edu.eta15.prefectura.domain.OutboxSummary
+import mx.edu.eta15.prefectura.domain.PrepareResult
+import mx.edu.eta15.prefectura.domain.Refusal
 import mx.edu.eta15.prefectura.domain.Profile
 import mx.edu.eta15.prefectura.domain.SchoolCalendar
 import mx.edu.eta15.prefectura.domain.SetMarkResult
@@ -50,6 +53,9 @@ class LocalAttendanceRepository(
 ) : AttendanceRepository {
     private val catalog = db.catalogDao()
     private val drafts = db.draftDao()
+
+    /** La outbox solo existe para perfiles descargados del servidor de pruebas (SANDBOX): la demostracion local no la tiene. */
+    private val outbox: OutboxStore? = if (access != null) OutboxStore(db, clock, ids) else null
 
     override fun schoolToday(): LocalDate = SchoolCalendar.today(clock)
 
@@ -161,12 +167,29 @@ class LocalAttendanceRepository(
             if (catalog.groupAuthState(profileId, draft.groupId) != "ACTIVE") return@withTransaction SetMarkResult.GroupRevoked
             // Un borrador de otra fecha escolar (p. ej. de ayer) ya no se modifica.
             if (draft.schoolDate != schoolToday().toString()) return@withTransaction SetMarkResult.DraftNotEditable
+            // Una marca que el servidor ya confirmo solo cambia entre Presente y Ausente: Pendiente no es una orden de borrarla.
+            if (mark == null && outbox?.isAcknowledgedStudent(draftId, studentId) == true) return@withTransaction SetMarkResult.UnmarkAfterAck
             val now = clock.millis()
             val changed = drafts.updateMark(draftId, studentId, mark?.name, if (mark == null) null else now)
             if (changed == 0) return@withTransaction SetMarkResult.NotFound
             drafts.touchDraft(draftId, now)
+            // En la MISMA transaccion: la marca y el estado "cambios sin preparar" nunca quedan desalineados.
+            outbox?.refreshIntent(profileId, draft)
             SetMarkResult.Saved
         }
+    }
+
+    override fun observeOutbox(groupId: String): Flow<OutboxSummary?> =
+        outbox?.observeSummary(profileId, groupId, todayFlow()) ?: flowOf(null)
+
+    override suspend fun prepareForSync(draftId: String): PrepareResult {
+        val store = outbox ?: return PrepareResult.Refused(Refusal.NotSandbox)
+        val gate = access?.current()
+        if (gate is OfflineAccess.Blocked) return PrepareResult.AccessBlocked(gate.reason)
+        access?.touch()
+        // La fecha solo se considera confirmada si coincide con la ultima fecha escolar que informo el servidor.
+        val confirmed = (gate as? OfflineAccess.Active)?.dateConfirmed ?: false
+        return store.prepare(profileId, draftId, schoolToday(), confirmed)
     }
 
     private fun DraftEntity.toState(groupName: String, rows: List<RosterRow>): DraftState = DraftState(

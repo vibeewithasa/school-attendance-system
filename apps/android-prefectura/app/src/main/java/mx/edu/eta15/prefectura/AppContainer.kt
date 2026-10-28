@@ -17,6 +17,7 @@ import mx.edu.eta15.prefectura.data.OfflineCacheStore
 import mx.edu.eta15.prefectura.data.ProfileAccessGate
 import mx.edu.eta15.prefectura.domain.OfflinePolicy
 import mx.edu.eta15.prefectura.data.NetworkMonitor
+import mx.edu.eta15.prefectura.data.OutboxStore
 import mx.edu.eta15.prefectura.data.local.EtaDatabase
 import mx.edu.eta15.prefectura.data.secure.SecureStorage
 import mx.edu.eta15.prefectura.data.secure.StorageException
@@ -93,6 +94,8 @@ class AppContainer(
         _storage.value = try {
             val database = withContext(Dispatchers.IO) { opener() }
             db = database
+            // Un envio que quedo a medias (el proceso murio) tiene resultado desconocido: nunca se toma como exito.
+            OutboxStore(database, clock, ids).recoverAfterRestart()
             if (DemoMode.ENABLED) DemoMode.seedIfEmpty(database, ids)
             StorageState.Ready(LocalAttendanceRepository(database, profileId, clock, ids), cipherVersion(database))
         } catch (e: CancellationException) {

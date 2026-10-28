@@ -248,4 +248,46 @@ class ProjectSecurityTest {
         assertFalse(Regex("""(?i)sincronizad[ao]|enviad[ao]|registrad[ao] por la escuela|finalizad[ao] oficialmente""").containsMatchIn(offline))
         assertTrue(strings.contains("GUARDADA EN ESTE DISPOSITIVO"))
     }
+
+    @Test
+    fun `la outbox no usa red ni programadores y su transporte futuro solo lo llaman las pruebas`() {
+        val base = "src/main/java/mx/edu/eta15/prefectura"
+        val outboxFiles = listOf("$base/data/OutboxStore.kt", "$base/data/local/OutboxEntities.kt", "$base/data/local/OutboxSql.kt", "$base/domain/Outbox.kt")
+        val text = outboxFiles.joinToString("\n") { file(it).readText() }
+        assertFalse(
+            "la outbox no conoce ninguna red ni programador",
+            Regex("""java\.net|okhttp|retrofit|HttpURLConnection|WorkManager|JobScheduler|AlarmManager|ConnectivityManager|/attendance|school/attendance""", RegexOption.IGNORE_CASE).containsMatchIn(text),
+        )
+        // Los metodos que representan el transporte (SENDING, recibo, contexto remoto, descarte) existen solo para simularlo en pruebas:
+        // ningun codigo de produccion (fuera de OutboxStore) los invoca.
+        val others = sourceFiles("src/main", "src/debug").filter { it.name != "OutboxStore.kt" }.joinToString("\n") { it.readText() }
+        for (method in listOf("resolveContext", "beginSending", "acknowledge(", "outbox.fail(", "discard(")) {
+            assertFalse("el codigo de produccion no debe llamar a $method", others.contains(method))
+        }
+        // La outbox solo se crea para perfiles descargados del servidor de pruebas (nunca para la demostracion local).
+        val repo = file("$base/data/LocalAttendanceRepository.kt").readText()
+        assertTrue(repo.contains("if (access != null) OutboxStore(db, clock, ids) else null"))
+    }
+
+    @Test
+    fun `la outbox nunca guarda credenciales ni pruebas de posesion y su esquema no tiene columnas de secretos`() {
+        val entities = file("src/main/java/mx/edu/eta15/prefectura/data/local/OutboxEntities.kt").readText()
+        assertFalse(
+            Regex("""(?i)token|password|secret|jwk|dpop|privateKey|cookie|csrf""").containsMatchIn(entities),
+        )
+        // la sincronizacion futura exige un estado explicito: sin REPLACE (borraria en cascada) ni migracion destructiva
+        assertFalse(entities.contains("OnConflictStrategy.REPLACE"))
+    }
+
+    @Test
+    fun `los textos de la outbox nunca afirman un envio ni un registro oficial`() {
+        val strings = file("src/main/res/values/strings.xml").readText()
+        val outbox = Regex("""<string name="(outbox_|capture_msg_cannot_unmark)[^"]*">([^<]*)</string>""")
+            .findAll(strings).joinToString("\n") { it.groupValues[2] }
+        assertTrue(outbox.isNotBlank())
+        // se permite negar ("no se envia", "aun no se envia"); nunca afirmar un envio, una sincronizacion o un registro oficial
+        assertFalse(Regex("""(?i)sincronizad[ao]|(?<!no se )enviad[ao]|registrad[ao] oficialmente|registrad[ao] por la escuela|finalizad[ao] oficialmente""").containsMatchIn(outbox))
+        assertFalse("sin boton de envio al servidor", Regex("""(?i)enviar al servidor""").containsMatchIn(outbox))
+        assertTrue(outbox.contains("Preparar para sincronizar"))
+    }
 }

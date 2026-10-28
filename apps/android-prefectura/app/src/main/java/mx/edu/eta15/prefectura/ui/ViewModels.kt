@@ -26,6 +26,9 @@ import mx.edu.eta15.prefectura.domain.AttendanceRepository
 import mx.edu.eta15.prefectura.domain.DraftState
 import mx.edu.eta15.prefectura.domain.Group
 import mx.edu.eta15.prefectura.domain.OpenDraftResult
+import mx.edu.eta15.prefectura.domain.OutboxSummary
+import mx.edu.eta15.prefectura.domain.PrepareResult
+import mx.edu.eta15.prefectura.domain.Refusal
 import mx.edu.eta15.prefectura.domain.Profile
 import mx.edu.eta15.prefectura.domain.SchoolCalendar
 import mx.edu.eta15.prefectura.domain.SetMarkResult
@@ -127,7 +130,7 @@ sealed interface CaptureUiState {
     data object GroupRevoked : CaptureUiState
 }
 
-enum class CaptureMessage { DraftNotEditable, NotFound, SaveFailed, AccessBlocked, GroupRevoked }
+enum class CaptureMessage { DraftNotEditable, NotFound, SaveFailed, AccessBlocked, GroupRevoked, CannotUnmark }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CaptureViewModel(private val repo: AttendanceRepository, private val groupId: String) : ViewModel() {
@@ -191,6 +194,7 @@ class CaptureViewModel(private val repo: AttendanceRepository, private val group
                     SetMarkResult.NotFound -> CaptureMessage.NotFound
                     is SetMarkResult.AccessBlocked -> CaptureMessage.AccessBlocked
                     SetMarkResult.GroupRevoked -> CaptureMessage.GroupRevoked
+                    SetMarkResult.UnmarkAfterAck -> CaptureMessage.CannotUnmark
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -212,16 +216,62 @@ sealed interface SummaryUiState {
 
     data object NoDraft : SummaryUiState
 
-    data class Ready(val draft: DraftState) : SummaryUiState
+    /** `outbox` solo existe en perfiles descargados del servidor de pruebas; `prepareMessage` es el ultimo resultado de preparar. */
+    data class Ready(
+        val draft: DraftState,
+        val outbox: OutboxSummary? = null,
+        val prepareMessage: PrepareMessage? = null,
+    ) : SummaryUiState
 
     data object Error : SummaryUiState
 }
 
-class SummaryViewModel(repo: AttendanceRepository, groupId: String) : ViewModel() {
-    val state: StateFlow<SummaryUiState> = repo.observeTodayDraft(groupId)
-        .map { d -> if (d == null) SummaryUiState.NoDraft else SummaryUiState.Ready(d) }
-        .catch { emit(SummaryUiState.Error) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), SummaryUiState.Loading)
+/** Resultado mostrado de "Preparar para sincronizar". Nunca dice que algo se envio: la preparacion es solo local. */
+enum class PrepareMessage {
+    Prepared, AlreadyPrepared, NothingToPrepare, TooManyMarks, InvalidIdentifier, UnmarkAfterSend, GroupRevoked, AccessBlocked,
+    LocalError, NotSandbox, DraftNotFound,
+}
+
+class SummaryViewModel(private val repo: AttendanceRepository, groupId: String) : ViewModel() {
+    private val message = MutableStateFlow<PrepareMessage?>(null)
+
+    val state: StateFlow<SummaryUiState> =
+        combine(repo.observeTodayDraft(groupId), repo.observeOutbox(groupId), message) { d, outbox, msg ->
+            if (d == null) SummaryUiState.NoDraft else SummaryUiState.Ready(d, outbox, msg)
+        }
+            .catch { emit(SummaryUiState.Error) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), SummaryUiState.Loading)
+
+    /** Sella los cambios locales en una operacion preparada. NO envia nada al servidor. */
+    fun prepare(draftId: String) {
+        viewModelScope.launch {
+            message.value = try {
+                when (val r = repo.prepareForSync(draftId)) {
+                    is PrepareResult.Prepared -> PrepareMessage.Prepared
+                    is PrepareResult.AlreadyPrepared -> PrepareMessage.AlreadyPrepared
+                    is PrepareResult.AccessBlocked -> PrepareMessage.AccessBlocked
+                    PrepareResult.DraftNotFound -> PrepareMessage.DraftNotFound
+                    PrepareResult.LocalError -> PrepareMessage.LocalError
+                    is PrepareResult.Refused -> when (r.refusal) {
+                        Refusal.NotSandbox -> PrepareMessage.NotSandbox
+                        Refusal.GroupRevoked -> PrepareMessage.GroupRevoked
+                        Refusal.NothingToPrepare -> PrepareMessage.NothingToPrepare
+                        is Refusal.TooManyMarks -> PrepareMessage.TooManyMarks
+                        is Refusal.InvalidIdentifier -> PrepareMessage.InvalidIdentifier
+                        is Refusal.UnmarkAfterSend -> PrepareMessage.UnmarkAfterSend
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                PrepareMessage.LocalError
+            }
+        }
+    }
+
+    fun consumePrepareMessage() {
+        message.value = null
+    }
 }
 
 // ---------- Conectividad y sincronizacion ----------
