@@ -74,6 +74,7 @@ describe('historial de migraciones de Drizzle', () => {
     '0009_prefect_group_assignments',
     '0010_daily_attendance',
     '0011_mobile_device_auth',
+    '0012_mobile_ip_retention',
   ];
 
   it('el journal registra todas las migraciones en orden, con marcas de tiempo crecientes', () => {

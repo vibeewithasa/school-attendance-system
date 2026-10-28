@@ -48,6 +48,12 @@ export interface MobileAuthConfig {
   maxProofsPerKey: number;
   /** Nonces sin gastar ni vencer que UNA clave conocida puede tener a la vez. */
   maxNoncesPerKey: number;
+  /** Solicitudes de vinculacion que una IP puede crear por ventana (limite COMPARTIDO en PostgreSQL; defensa adicional, no unica). */
+  maxRequestsPerIp: number;
+  ipWindowSeconds: number;
+  /** Reclamos fallidos de UNA cuenta autenticada por ventana (contados en el registro de auditoria: compartidos entre instancias). */
+  maxClaimFailuresPerUser: number;
+  claimFailureWindowSeconds: number;
 }
 
 /** Valores de ENSAYO del sandbox (no son politica institucional; ver ADR 0005). */
@@ -63,6 +69,10 @@ export const SANDBOX_MOBILE_DEFAULTS: Omit<MobileAuthConfig, 'publicBaseUrl'> = 
   maxPendingPerIp: 10,
   maxProofsPerKey: 300,
   maxNoncesPerKey: 5,
+  maxRequestsPerIp: 20,
+  ipWindowSeconds: 3600,
+  maxClaimFailuresPerUser: 10,
+  claimFailureWindowSeconds: 900,
 };
 
 /** Permisos que un token movil puede ejercer (los demas del rol NO se exponen por este canal). Hoy: solo lectura. */
@@ -80,9 +90,23 @@ export type MobileFailure =
   | 'RATE_LIMITED'
   | 'UNAVAILABLE';
 export type MobileResult<T> =
-  { ok: true; value: T } | { ok: false; code: MobileFailure; message: string; reason: string };
-const fail = (code: MobileFailure, reason: string, message: string) =>
-  ({ ok: false, code, message, reason }) as const;
+  | { ok: true; value: T }
+  | {
+      ok: false;
+      code: MobileFailure;
+      message: string;
+      reason: string;
+      /** Segundos hasta poder reintentar (limites con ventana): la ruta lo traduce a `Retry-After`. */
+      retryAfterSeconds?: number;
+    };
+const fail = (code: MobileFailure, reason: string, message: string, retryAfterSeconds?: number) =>
+  ({
+    ok: false,
+    code,
+    message,
+    reason,
+    ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
+  }) as const;
 
 export interface WebContext {
   actorId: string;
@@ -92,7 +116,10 @@ export interface WebContext {
   requestId?: string | null;
 }
 export interface DeviceContext {
+  /** IP exacta de la conexion: solo para el limite por IP y la sesion (retencion provisional; ver el ADR 0005). */
   ip?: string | null;
+  /** IP `gruesa` (red /24 o /48) para el registro de auditoria, que es inmutable y no debe guardar la IP exacta. */
+  auditIp?: string | null;
   userAgent?: string | null;
   requestId?: string | null;
 }
@@ -156,6 +183,26 @@ function newPairingCode(): string {
   for (let i = 0; i < 8; i += 1) raw += PAIRING_ALPHABET[randomInt(PAIRING_ALPHABET.length)];
   return `${raw.slice(0, 4)}-${raw.slice(4)}`;
 }
+
+/** Red /24 (IPv4) o /48 (IPv6) de una IP: suficiente para analizar un incidente sin guardar la direccion exacta. */
+export function coarseIp(ip: string | null | undefined): string | null {
+  if (!ip) return null;
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}$/.exec(ip);
+  if (v4) return `${v4[1]}.${v4[2]}.${v4[3]}.0`;
+  const mapped = /^::ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}$/i.exec(ip);
+  if (mapped) return `${mapped[1]}.${mapped[2]}.${mapped[3]}.0`;
+  if (ip.includes(':')) {
+    const groups = ip.split(':').filter((g) => g !== '');
+    return `${groups.slice(0, 3).join(':') || '0'}::`;
+  }
+  return null;
+}
+/** Contexto de auditoria de un evento del canal movil anonimo: sin persona autenticada y con IP gruesa. */
+const deviceAudit = (ctx: DeviceContext) => ({
+  ...ctx,
+  ip: ctx.auditIp !== undefined ? ctx.auditIp : coarseIp(ctx.ip),
+  actorId: null,
+});
 
 const has = (grants: readonly Grant[], permission: string, scope: Scope) =>
   grants.some((g) => g.permission === permission && g.scope === scope);
@@ -397,29 +444,89 @@ export function createMobileAuthService(options: MobileAuthServiceOptions) {
             'REQUEST_ALREADY_OPEN',
             'Ya hay una solicitud en curso para esta clave',
           );
+        // Las solicitudes abiertas ya vencidas se CIERRAN (no se borran) en lotes pequenos: no ocupan cupos ni bloquean a nadie.
+        await tx.query(
+          `UPDATE mobile_device_requests SET status = 'cancelled'
+            WHERE id IN (SELECT id FROM mobile_device_requests
+                          WHERE status IN ('pending', 'claimed', 'approved') AND expires_at <= $1
+                          ORDER BY expires_at LIMIT 25)`,
+          [now],
+        );
+        let minePending = 0;
         if (ctx.ip) {
+          // Limite COMPARTIDO (PostgreSQL) de solicitudes por IP y ventana: defensa adicional, no unica (una IP puede ser
+          // la de varios dispositivos legitimos); el crecimiento de la tabla queda acotado por este mismo limite.
+          const window = await tx.query<{ n: number; oldest: Date | null }>(
+            `SELECT count(*)::int AS n, min(created_at) AS oldest FROM mobile_device_requests
+              WHERE requested_ip = $2::inet AND created_at > $1`,
+            [addSeconds(now, -config.ipWindowSeconds), ctx.ip],
+          );
+          const w = window.rows[0]!;
+          if (w.n >= config.maxRequestsPerIp)
+            return fail(
+              'RATE_LIMITED',
+              'IP_RATE_LIMITED',
+              'Demasiadas solicitudes desde esta red; intente más tarde',
+              Math.max(
+                1,
+                Math.ceil(
+                  (addSeconds(w.oldest ?? now, config.ipWindowSeconds).getTime() - now.getTime()) /
+                    1000,
+                ),
+              ),
+            );
           const mine = await tx.query<{ n: number }>(
             `SELECT count(*)::int AS n FROM mobile_device_requests
               WHERE status = 'pending' AND expires_at > $1 AND requested_ip = $2::inet`,
             [now, ctx.ip],
           );
-          if (mine.rows[0]!.n >= config.maxPendingPerIp)
+          minePending = mine.rows[0]!.n;
+          if (minePending >= config.maxPendingPerIp)
             return fail(
               'RATE_LIMITED',
               'TOO_MANY_PENDING',
               'Hay demasiadas solicitudes pendientes desde esta red; intente más tarde',
+              config.requestTtlSeconds,
             );
         }
         const pending = await tx.query<{ n: number }>(
           `SELECT count(*)::int AS n FROM mobile_device_requests WHERE status = 'pending' AND expires_at > $1`,
           [now],
         );
-        if (pending.rows[0]!.n >= config.maxPendingRequests)
-          return fail(
-            'RATE_LIMITED',
-            'TOO_MANY_PENDING',
-            'Hay demasiadas solicitudes pendientes; intente más tarde',
+        if (pending.rows[0]!.n >= config.maxPendingRequests) {
+          // Cupo global lleno: expulsion JUSTA. Si otra red acumula claramente mas pendientes que esta, se cierra la mas antigua
+          // de ESA red y se admite esta; si no, se rechaza. Asi muchas solicitudes anonimas no impiden la vinculacion legitima.
+          const top = await tx.query<{ ip: string; n: number }>(
+            `SELECT host(requested_ip) AS ip, count(*)::int AS n FROM mobile_device_requests
+              WHERE status = 'pending' AND expires_at > $1 AND requested_ip IS NOT NULL
+              GROUP BY requested_ip ORDER BY n DESC LIMIT 1`,
+            [now],
           );
+          const heavy = top.rows[0];
+          const evicted =
+            heavy && heavy.ip !== ctx.ip && heavy.n > minePending + 1
+              ? await tx.query<{ id: string }>(
+                  `UPDATE mobile_device_requests SET status = 'cancelled'
+                    WHERE id = (SELECT id FROM mobile_device_requests
+                                 WHERE status = 'pending' AND expires_at > $1 AND requested_ip = $2::inet
+                                 ORDER BY created_at LIMIT 1)
+                RETURNING id`,
+                  [now, heavy.ip],
+                )
+              : null;
+          if (!evicted || evicted.rows.length === 0)
+            return fail(
+              'RATE_LIMITED',
+              'TOO_MANY_PENDING',
+              'Hay demasiadas solicitudes pendientes; intente más tarde',
+              60,
+            );
+          await recordAudit(tx, deviceAudit(ctx), {
+            type: 'mobile.request_evicted',
+            outcome: 'success',
+            details: { requestId: evicted.rows[0]!.id, reason: 'capacity' },
+          });
+        }
         const expiresAt = addSeconds(now, config.requestTtlSeconds);
         const created = await tx.query<{ id: string }>(
           `INSERT INTO mobile_device_requests (key_thumbprint, public_key_jwk, device_label, pairing_code_hash, created_at, expires_at, requested_ip)
@@ -435,7 +542,7 @@ export function createMobileAuthService(options: MobileAuthServiceOptions) {
           ],
         );
         const requestId = created.rows[0]!.id;
-        await recordAudit(tx, ctx, {
+        await recordAudit(tx, deviceAudit(ctx), {
           type: 'mobile.device_requested',
           outcome: 'success',
           details: { requestId, fingerprint: shortFingerprint(thumbprint) },
@@ -588,20 +695,16 @@ export function createMobileAuthService(options: MobileAuthServiceOptions) {
         await tx.query(`UPDATE mobile_device_requests SET status = 'activated' WHERE id = $1`, [
           row.id,
         ]);
-        await recordAudit(
-          tx,
-          { ...ctx, actorId: null },
-          {
-            type: 'mobile.device_activated',
-            outcome: 'success',
-            subject: row.user_id,
-            details: {
-              requestId: row.id,
-              deviceId: device.rows[0]!.id,
-              fingerprint: shortFingerprint(row.key_thumbprint),
-            },
+        await recordAudit(tx, deviceAudit(ctx), {
+          type: 'mobile.device_activated',
+          outcome: 'success',
+          subject: row.user_id,
+          details: {
+            requestId: row.id,
+            deviceId: device.rows[0]!.id,
+            fingerprint: shortFingerprint(row.key_thumbprint),
           },
-        );
+        });
         return { ok: true as const, value: { deviceId: device.rows[0]!.id } };
       });
     },
@@ -623,6 +726,36 @@ export function createMobileAuthService(options: MobileAuthServiceOptions) {
       );
       return run(async (tx) => {
         const now = await nowOf(tx);
+        // Una vinculacion VENCIDA de esta persona no la bloquea: se cierra (sin borrar) antes de reclamar otra.
+        await tx.query(
+          `UPDATE mobile_device_requests SET status = 'cancelled'
+            WHERE user_id = $1 AND status IN ('claimed', 'approved') AND expires_at <= $2`,
+          [ctx.actorId, now],
+        );
+        // Limite COMPARTIDO por cuenta autenticada: los reclamos fallidos ya quedan en el registro de auditoria (indice por persona).
+        const failures = await tx.query<{ n: number; oldest: Date | null }>(
+          `SELECT count(*)::int AS n, min(occurred_at) AS oldest FROM audit_events
+            WHERE event_type = 'mobile.device_claim_failed' AND subject_user_id = $1
+              AND occurred_at > now() - make_interval(secs => $2)`,
+          [ctx.actorId, config.claimFailureWindowSeconds],
+        );
+        if (failures.rows[0]!.n >= config.maxClaimFailuresPerUser)
+          return fail(
+            'RATE_LIMITED',
+            'CLAIM_RATE_LIMITED',
+            'Demasiados intentos. Intente más tarde.',
+            Math.max(
+              1,
+              Math.ceil(
+                (addSeconds(
+                  failures.rows[0]!.oldest ?? now,
+                  config.claimFailureWindowSeconds,
+                ).getTime() -
+                  Date.now()) /
+                  1000,
+              ),
+            ),
+          );
         const r = await tx.query<RequestRow>(`${REQUEST_SELECT} WHERE r.id = $1 FOR UPDATE OF r`, [
           input.requestId,
         ]);
@@ -860,16 +993,12 @@ export function createMobileAuthService(options: MobileAuthServiceOptions) {
         const dev = d.rows[0];
         if (!dev) return fail('UNAUTHENTICATED', 'UNKNOWN_DEVICE', 'Dispositivo no registrado');
         if (dev.status !== 'active') {
-          await recordAudit(
-            tx,
-            { ...ctx, actorId: null },
-            {
-              type: 'mobile.access_denied',
-              outcome: 'denied',
-              subject: dev.user_id,
-              details: { deviceId: dev.id, reason: 'device_revoked', stage: 'token' },
-            },
-          );
+          await recordAudit(tx, deviceAudit(ctx), {
+            type: 'mobile.access_denied',
+            outcome: 'denied',
+            subject: dev.user_id,
+            details: { deviceId: dev.id, reason: 'device_revoked', stage: 'token' },
+          });
           return fail('UNAUTHENTICATED', 'DEVICE_REVOKED', 'El dispositivo fue revocado');
         }
         const elig = await tx.query<{ ok: boolean; must_change: boolean }>(
@@ -877,16 +1006,12 @@ export function createMobileAuthService(options: MobileAuthServiceOptions) {
           [dev.user_id, dev.registered_at],
         );
         if (!elig.rows[0]!.ok) {
-          await recordAudit(
-            tx,
-            { ...ctx, actorId: null },
-            {
-              type: 'mobile.access_denied',
-              outcome: 'denied',
-              subject: dev.user_id,
-              details: { deviceId: dev.id, reason: 'not_eligible', stage: 'token' },
-            },
-          );
+          await recordAudit(tx, deviceAudit(ctx), {
+            type: 'mobile.access_denied',
+            outcome: 'denied',
+            subject: dev.user_id,
+            details: { deviceId: dev.id, reason: 'not_eligible', stage: 'token' },
+          });
           return fail('FORBIDDEN', 'NOT_ELIGIBLE', 'La cuenta no puede abrir sesiones móviles');
         }
         if (elig.rows[0]!.must_change)
@@ -923,16 +1048,12 @@ export function createMobileAuthService(options: MobileAuthServiceOptions) {
           ],
         );
         await tx.query(`UPDATE mobile_devices SET last_seen_at = $2 WHERE id = $1`, [dev.id, now]);
-        await recordAudit(
-          tx,
-          { ...ctx, actorId: null },
-          {
-            type: 'mobile.session_issued',
-            outcome: 'success',
-            subject: dev.user_id,
-            details: { deviceId: dev.id },
-          },
-        );
+        await recordAudit(tx, deviceAudit(ctx), {
+          type: 'mobile.session_issued',
+          outcome: 'success',
+          subject: dev.user_id,
+          details: { deviceId: dev.id },
+        });
         return {
           ok: true as const,
           value: {
@@ -990,16 +1111,12 @@ export function createMobileAuthService(options: MobileAuthServiceOptions) {
                 `UPDATE mobile_sessions SET revoked_reason = 'refresh_reuse' WHERE id = $1`,
                 [old.id],
               );
-            await recordAudit(
-              tx,
-              { ...ctx, actorId: null },
-              {
-                type: 'mobile.session_reuse',
-                outcome: 'denied',
-                subject: old.user_id,
-                details: { sessionId: old.id },
-              },
-            );
+            await recordAudit(tx, deviceAudit(ctx), {
+              type: 'mobile.session_reuse',
+              outcome: 'denied',
+              subject: old.user_id,
+              details: { sessionId: old.id },
+            });
             return fail(
               'UNAUTHENTICATED',
               'REFRESH_REUSED',
@@ -1009,16 +1126,12 @@ export function createMobileAuthService(options: MobileAuthServiceOptions) {
           return fail('UNAUTHENTICATED', 'INVALID_TOKEN', 'Credencial no válida');
         }
         if (s.key_thumbprint !== thumbprint) {
-          await recordAudit(
-            tx,
-            { ...ctx, actorId: null },
-            {
-              type: 'mobile.access_denied',
-              outcome: 'denied',
-              subject: s.user_id,
-              details: { deviceId: s.device_id, reason: 'wrong_key', stage: 'refresh' },
-            },
-          );
+          await recordAudit(tx, deviceAudit(ctx), {
+            type: 'mobile.access_denied',
+            outcome: 'denied',
+            subject: s.user_id,
+            details: { deviceId: s.device_id, reason: 'wrong_key', stage: 'refresh' },
+          });
           return fail('UNAUTHENTICATED', 'INVALID_TOKEN', 'Credencial no válida');
         }
         if (s.revoked_at)
@@ -1041,16 +1154,12 @@ export function createMobileAuthService(options: MobileAuthServiceOptions) {
             `UPDATE mobile_sessions SET revoked_reason = 'account_inactive' WHERE id = $1`,
             [s.id],
           );
-          await recordAudit(
-            tx,
-            { ...ctx, actorId: null },
-            {
-              type: 'mobile.access_denied',
-              outcome: 'denied',
-              subject: s.user_id,
-              details: { deviceId: s.device_id, reason: 'not_eligible', stage: 'refresh' },
-            },
-          );
+          await recordAudit(tx, deviceAudit(ctx), {
+            type: 'mobile.access_denied',
+            outcome: 'denied',
+            subject: s.user_id,
+            details: { deviceId: s.device_id, reason: 'not_eligible', stage: 'refresh' },
+          });
           return fail('FORBIDDEN', 'NOT_ELIGIBLE', 'La cuenta ya no puede usar sesiones móviles');
         }
         const access = newToken();
@@ -1076,16 +1185,12 @@ export function createMobileAuthService(options: MobileAuthServiceOptions) {
           s.device_id,
           now,
         ]);
-        await recordAudit(
-          tx,
-          { ...ctx, actorId: null },
-          {
-            type: 'mobile.session_refreshed',
-            outcome: 'success',
-            subject: s.user_id,
-            details: { deviceId: s.device_id, sessionId: s.id },
-          },
-        );
+        await recordAudit(tx, deviceAudit(ctx), {
+          type: 'mobile.session_refreshed',
+          outcome: 'success',
+          subject: s.user_id,
+          details: { deviceId: s.device_id, sessionId: s.id },
+        });
         return {
           ok: true as const,
           value: {
@@ -1198,16 +1303,12 @@ export function createMobileAuthService(options: MobileAuthServiceOptions) {
           [sessionId],
         );
         if (r.rows.length === 0) return false;
-        await recordAudit(
-          tx,
-          { ...ctx, actorId: null },
-          {
-            type: 'mobile.session_revoked',
-            outcome: 'success',
-            subject: userId,
-            details: { sessionId, reason: 'logout' },
-          },
-        );
+        await recordAudit(tx, deviceAudit(ctx), {
+          type: 'mobile.session_revoked',
+          outcome: 'success',
+          subject: userId,
+          details: { sessionId, reason: 'logout' },
+        });
         return true;
       });
     },

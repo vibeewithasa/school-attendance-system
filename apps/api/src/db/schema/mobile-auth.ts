@@ -137,6 +137,10 @@ export const mobileDeviceRequests = pgTable(
       .on(t.userId)
       .where(sql`${t.status} IN ('claimed', 'approved')`),
     index('mdr_status_expires_idx').on(t.status, t.expiresAt),
+    // Limite compartido de solicitudes por IP y ventana (la anonimizacion por retencion pone la IP en NULL y las saca del indice).
+    index('mdr_ip_created_idx')
+      .on(t.requestedIp, t.createdAt)
+      .where(sql`${t.requestedIp} IS NOT NULL`),
   ],
 );
 

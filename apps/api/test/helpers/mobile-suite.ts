@@ -1625,45 +1625,197 @@ export function defineMobileTests(kit: AdminKit): void {
         expect((await api(target, l.dev, t, 'GET', '/mobile/me')).statusCode).toBe(200);
         await target.close();
       });
+    });
 
-      it('limites por IP: se agotan, se RECUPERAN al vencer la ventana y una IP no agota el cupo de otra', async () => {
-        let now = Date.now();
+    // ================================================================================================ limites compartidos
+    describe('LIMITES COMPARTIDOS (PostgreSQL), solicitudes pendientes y retencion de IP', () => {
+      type MobileOpts = NonNullable<NonNullable<Parameters<AdminKit['build']>[1]>['mobile']>;
+      const GENEROUS = {
+        enrollIp: 1000,
+        challengeIp: 10_000,
+        tokenFailIp: 10_000,
+        tokenFailKey: 10_000,
+        claimFailUser: 10_000,
+      };
+      const instance = async (mobile: Partial<MobileOpts> = {}) => {
         const target = await kit.build(
-          { now: () => now, windowMs: 60_000 },
-          {
-            mobile: {
-              publicBaseUrl: BASE,
-              limits: { ...GENEROUS, enrollIp: 2 },
-              config: { maxPendingPerIp: 2 },
-            },
-          },
+          {},
+          { mobile: { publicBaseUrl: BASE, limits: GENEROUS, ...mobile } },
         );
         await target.ready();
-        const enrollFrom = (ip: string) =>
-          target.inject({
-            method: 'POST',
-            url: '/mobile/enroll/requests',
-            remoteAddress: ip,
-            payload: { publicKey: new FakeDevice().jwk, label: 'x', platform: 'android' },
-          });
-        const a = [
-          await enrollFrom('10.8.0.1'),
-          await enrollFrom('10.8.0.1'),
-          await enrollFrom('10.8.0.1'),
-        ];
-        expect(a.map((r) => r.statusCode)).toEqual([201, 201, 429]);
-        expect((await enrollFrom('10.8.0.2')).statusCode).toBe(201); // otra IP: su propio cupo
-        now += 61_000; // vence la ventana de conteo
-        const stillPending = await enrollFrom('10.8.0.1');
-        // el tope de solicitudes PENDIENTES por IP es distinto y no depende de la ventana: 2 pendientes abiertas
-        expect([stillPending.statusCode, json(stillPending).error.code]).toEqual([
-          429,
-          'TOO_MANY_PENDING',
-        ]);
-        await q(
-          `update mobile_device_requests set status = 'cancelled' where requested_ip = '10.8.0.1' and status = 'pending'`,
+        return target;
+      };
+      const enrollFrom = (target: FastifyInstance, ip: string, dev = new FakeDevice()) =>
+        target.inject({
+          method: 'POST',
+          url: '/mobile/enroll/requests',
+          remoteAddress: ip,
+          payload: { publicKey: dev.jwk, label: 'x', platform: 'android' },
+        });
+      const cleanIp = (ip: string) =>
+        q(
+          `update mobile_device_requests set status = 'cancelled' where requested_ip = $1::inet and status = 'pending'`,
+          [ip],
         );
-        expect((await enrollFrom('10.8.0.1')).statusCode).toBe(201); // recuperado
+
+      it('solicitudes por IP y ventana: limite COMPARTIDO entre instancias, con Retry-After, y se recupera al vencer', async () => {
+        let offsetMs = 0;
+        const mobile = {
+          clock: () => new Date(Date.now() + offsetMs),
+          limits: { ...GENEROUS, enrollIp: 3 },
+          config: { ipWindowSeconds: 60, maxPendingPerIp: 100 },
+        };
+        const a = await instance(mobile);
+        const b = await instance(mobile); // otra instancia: memoria propia, MISMA base
+        const ip = '10.30.0.1';
+        const res = [
+          await enrollFrom(a, ip),
+          await enrollFrom(b, ip),
+          await enrollFrom(a, ip),
+          await enrollFrom(b, ip), // la cuarta ya excede el limite, aunque cada instancia solo vio dos
+        ];
+        expect(res.map((r) => r.statusCode)).toEqual([201, 201, 201, 429]);
+        expect(json(res[3]!).error.code).toBe('IP_RATE_LIMITED');
+        const retry = Number(res[3]!.headers['retry-after']);
+        expect(retry).toBeGreaterThanOrEqual(1);
+        expect(retry).toBeLessThanOrEqual(60);
+        expect((await enrollFrom(a, '10.30.0.2')).statusCode).toBe(201); // otra IP: su propio cupo
+        offsetMs = 61_000; // vence la ventana: recuperacion automatica en cualquier instancia
+        expect((await enrollFrom(b, ip)).statusCode).toBe(201);
+        await Promise.all([a.close(), b.close()]);
+      });
+
+      it('la tabla no crece sin limite por solicitudes anonimas: cada IP queda acotada por su limite de ventana', async () => {
+        const target = await instance({
+          limits: { ...GENEROUS, enrollIp: 4 },
+          config: { maxPendingPerIp: 100 },
+        });
+        const before = await n(`select count(*) n from mobile_device_requests`);
+        const codes: number[] = [];
+        for (let i = 0; i < 25; i += 1)
+          codes.push((await enrollFrom(target, '10.31.0.9')).statusCode);
+        expect(codes.filter((c) => c === 201)).toHaveLength(4);
+        expect(await n(`select count(*) n from mobile_device_requests`)).toBe(before + 4);
+        await target.close();
+      });
+
+      it('cupo global lleno: EXPULSION JUSTA (se cierra la solicitud mas antigua de la red con mas pendientes) y nadie queda fuera por un abuso ajeno', async () => {
+        await q(`update mobile_device_requests set status = 'cancelled' where status = 'pending'`);
+        const target = await instance({ config: { maxPendingRequests: 3, maxPendingPerIp: 2 } });
+        const heavy1 = await enrollFrom(target, '10.32.0.1');
+        const heavy2 = await enrollFrom(target, '10.32.0.1');
+        const other = await enrollFrom(target, '10.32.0.2');
+        expect([heavy1, heavy2, other].map((r) => r.statusCode)).toEqual([201, 201, 201]); // 3 de 3
+        const newcomer = await enrollFrom(target, '10.32.0.3'); // llega alguien legitimo con el cupo lleno
+        expect(newcomer.statusCode, newcomer.body).toBe(201);
+        const status = async (id: string) =>
+          (await q(`select status from mobile_device_requests where id = $1`, [id]))[0]!.status;
+        expect(await status(json(heavy1).requestId)).toBe('cancelled'); // la mas antigua de la red que mas tenia
+        expect(await status(json(heavy2).requestId)).toBe('pending');
+        expect(await status(json(other).requestId)).toBe('pending');
+        expect(
+          await n(
+            `select count(*) n from audit_events where event_type = 'mobile.request_evicted'`,
+          ),
+        ).toBeGreaterThanOrEqual(1);
+        // sin una red claramente abusadora no se expulsa a nadie: se rechaza con Retry-After
+        const late = await enrollFrom(target, '10.32.0.4');
+        expect([late.statusCode, json(late).error.code]).toEqual([429, 'TOO_MANY_PENDING']);
+        expect(late.headers['retry-after']).toBeDefined();
+        await q(`update mobile_device_requests set status = 'cancelled' where status = 'pending'`);
+        await target.close();
+      });
+
+      it('una vinculacion VENCIDA de la persona no la bloquea: se cierra (sin borrar) y puede reclamar otra', async () => {
+        let offsetMs = 0;
+        const target = await instance({ clock: () => new Date(Date.now() + offsetMs) });
+        const acc = await kit.seed({ role: 'prefectura' });
+        const me = await kit.login(acc, target);
+        const claimFor = async (dev: FakeDevice) => {
+          const req = await enroll(target, dev);
+          return {
+            req,
+            res: await kit.call(me, 'POST', '/mobile-devices/claims', {
+              body: { requestId: req.requestId, code: req.pairingCode },
+              target,
+            }),
+          };
+        };
+        const first = await claimFor(new FakeDevice());
+        expect(first.res.statusCode, first.res.body).toBe(200);
+        const blocked = await claimFor(new FakeDevice()); // aun vigente: una vinculacion en curso por persona
+        expect(blocked.res.statusCode).toBe(409);
+        offsetMs = 11 * 60_000; // la primera vencio
+        const second = await claimFor(new FakeDevice());
+        expect(second.res.statusCode, second.res.body).toBe(200);
+        expect(
+          (
+            await q(`select status from mobile_device_requests where id = $1`, [
+              first.req.requestId,
+            ])
+          )[0]!.status,
+        ).toBe('cancelled');
+        await q(
+          `update mobile_device_requests set status = 'cancelled' where user_id = $1 and status = 'claimed'`,
+          [acc.id],
+        );
+        await target.close();
+      });
+
+      it('reclamos fallidos por CUENTA autenticada: limite COMPARTIDO entre instancias, con Retry-After, y se recupera al vencer la ventana', async () => {
+        const mobile = {
+          limits: { ...GENEROUS, claimFailUser: 3 },
+          config: { claimFailureWindowSeconds: 2 },
+        };
+        const a = await instance(mobile);
+        const b = await instance(mobile);
+        const acc = await kit.seed({ role: 'prefectura' });
+        const meA = await kit.login(acc, a);
+        const meB = await kit.login(acc, b);
+        const bad = async (target: FastifyInstance, who: Login) => {
+          const req = await enroll(target, new FakeDevice());
+          return kit.call(who, 'POST', '/mobile-devices/claims', {
+            body: { requestId: req.requestId, code: 'AAAA-AAAA' },
+            target,
+          });
+        };
+        expect((await bad(a, meA)).statusCode).toBe(400);
+        expect((await bad(b, meB)).statusCode).toBe(400);
+        expect((await bad(a, meA)).statusCode).toBe(400);
+        const limited = await bad(b, meB); // el cuarto fallo de la cuenta, vea la instancia que vea
+        expect([limited.statusCode, json(limited).error.code]).toEqual([429, 'CLAIM_RATE_LIMITED']);
+        expect(Number(limited.headers['retry-after'])).toBeGreaterThanOrEqual(1);
+        // otra cuenta no se ve afectada
+        const other = await kit.seed({ role: 'prefectura' });
+        expect((await bad(a, await kit.login(other, a))).statusCode).toBe(400);
+        await new Promise((r) => setTimeout(r, 2300)); // vence la ventana
+        expect((await bad(b, meB)).statusCode).toBe(400); // ya no limitada (vuelve a contar)
+        await q(`update mobile_device_requests set status = 'cancelled' where status = 'pending'`);
+        await Promise.all([a.close(), b.close()]);
+      });
+
+      it('RETENCION de IP: la solicitud y la sesion guardan la IP exacta (para limites y revision); la auditoria inmutable solo la red /24', async () => {
+        const target = await instance();
+        const res = await enrollFrom(target, '10.77.5.123');
+        expect(res.statusCode).toBe(201);
+        const row = (
+          await q(`select host(requested_ip) ip from mobile_device_requests where id = $1`, [
+            json(res).requestId,
+          ])
+        )[0]!;
+        expect(row.ip).toBe('10.77.5.123');
+        const audit = await q(
+          `select host(ip) ip from audit_events where event_type = 'mobile.device_requested' and details->>'requestId' = $1`,
+          [json(res).requestId],
+        );
+        expect(audit[0]!.ip).toBe('10.77.5.0'); // red /24: sin la IP exacta
+        // ningun evento de auditoria del canal anonimo guarda una IP exacta
+        const exact = await q(
+          `select event_type, host(ip) ip from audit_events where event_type like 'mobile.%' and ip is not null and family(ip) = 4 and host(ip) !~ '\\.0$'
+              and actor_user_id is null`,
+        );
+        expect(exact).toEqual([]);
+        await cleanIp('10.77.5.123');
         await target.close();
       });
     });
@@ -1883,10 +2035,11 @@ export function defineMobileTests(kit: AdminKit): void {
         const reqs = [];
         for (const d of devs) {
           reqs.push(
-            await rawPost(limited, '/mobile/enroll/requests', {
-              publicKey: d.jwk,
-              label: 'x',
-              platform: 'android',
+            await limited.inject({
+              method: 'POST',
+              url: '/mobile/enroll/requests',
+              remoteAddress: '10.55.0.1', // el limite es compartido en la base: una IP propia de la prueba
+              payload: { publicKey: d.jwk, label: 'x', platform: 'android' },
             }),
           );
         }

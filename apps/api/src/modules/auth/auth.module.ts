@@ -315,6 +315,11 @@ async function registerMobile(
     ...mobile.config,
     publicBaseUrl: mobile.publicBaseUrl.replace(/\/+$/, ''),
   };
+  const mLimits = { ...DEFAULT_MOBILE_LIMITS, ...mobile.limits };
+  // Los limites de solicitudes por IP y de reclamos fallidos por cuenta son COMPARTIDOS: los aplica el servicio con PostgreSQL.
+  if (mobile.limits?.enrollIp !== undefined) config.maxRequestsPerIp = mLimits.enrollIp;
+  if (mobile.limits?.claimFailUser !== undefined)
+    config.maxClaimFailuresPerUser = mLimits.claimFailUser;
   if (!/^https?:\/\/[^/\s]+$/.test(config.publicBaseUrl))
     throw new Error('publicBaseUrl debe ser esquema + host (+ puerto), sin ruta');
   if (
@@ -327,7 +332,6 @@ async function registerMobile(
     throw new Error('La tolerancia de reloj y la vida del nonce deben caber en 15 minutos');
   if (config.maxProofsPerKey < 1 || config.maxNoncesPerKey < 1 || config.maxPendingPerIp < 1)
     throw new Error('Los cupos moviles deben ser positivos');
-  const mLimits = { ...DEFAULT_MOBILE_LIMITS, ...mobile.limits };
   // La proteccion anti-replay y los nonces son estado COMPARTIDO en PostgreSQL (tablas de la 0011), no memoria del proceso.
   const service = createMobileAuthService({ store, config, clock: mobile.clock });
   const mobileGuards = createMobileGuards({ service, config, clock: mobile.clock });
@@ -342,7 +346,6 @@ async function registerMobile(
         guards: mobileGuards,
         config,
         limiters: {
-          enrollIp: limiter(mLimits.enrollIp),
           challengeIp: limiter(mLimits.challengeIp),
           tokenFailIp: limiter(mLimits.tokenFailIp),
           tokenFailKey: limiter(mLimits.tokenFailKey),
@@ -382,7 +385,6 @@ async function registerMobile(
         service,
         guards,
         mfaDeferredAllowed,
-        claimLimiter: limiter(mLimits.claimFailUser),
         floodLimit: limits.floodOther,
       });
     },

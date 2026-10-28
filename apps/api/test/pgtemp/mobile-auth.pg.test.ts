@@ -179,7 +179,21 @@ function suite(label: string, mode: 'full' | 'unavailable') {
           });
 
           it('FALLA REAL de PostgreSQL durante la admision anti-replay: la peticion se rechaza (503) y se recupera al restablecer el privilegio', async () => {
-            const target = await kit.build({}, { mobile: { publicBaseUrl: 'http://mobile.test' } });
+            const target = await kit.build(
+              {},
+              {
+                mobile: {
+                  publicBaseUrl: 'http://mobile.test',
+                  limits: {
+                    enrollIp: 1000,
+                    challengeIp: 10_000,
+                    tokenFailIp: 10_000,
+                    tokenFailKey: 10_000,
+                    claimFailUser: 10_000,
+                  },
+                },
+              },
+            );
             await target.ready();
             const dev = new FakeDevice();
             const enrollRes = await target.inject({

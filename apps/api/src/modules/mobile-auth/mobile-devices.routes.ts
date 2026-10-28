@@ -18,7 +18,6 @@ import {
 } from '@eta15/shared-contracts';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import type { AttemptLimiter } from '../auth/attempt-limiter.js';
 import { errorBody, type AuthGuards } from '../auth/guards.js';
 import type { MobileAuthService, WebContext } from './mobile-auth.service.js';
 import { sendMobileResult } from './mobile-auth.routes.js';
@@ -28,7 +27,6 @@ export interface MobileDevicesRoutesOptions {
   guards: AuthGuards;
   mfaDeferredAllowed: boolean;
   /** Intentos fallidos de reclamo por cuenta (ademas del tope por solicitud en la base). */
-  claimLimiter: AttemptLimiter;
   floodLimit: number;
 }
 
@@ -49,7 +47,7 @@ export function mobileDevicesRoutes(
   app: FastifyInstance,
   options: MobileDevicesRoutesOptions,
 ): void {
-  const { service, guards, claimLimiter } = options;
+  const { service, guards } = options;
   const rate = { rateLimit: { max: options.floodLimit, timeWindow: '1 minute' } };
   // La persona titular (prefectura) no requiere MFA: sesion normal. La autoridad usa la puerta administrativa completa.
   const self = { config: rate, preHandler: guards.sessionGuard() };
@@ -71,17 +69,8 @@ export function mobileDevicesRoutes(
   app.post('/claims', { ...selfWrite, bodyLimit: 512 }, async (request, reply) => {
     const body = claimMobileDeviceBody.safeParse(request.body);
     if (!body.success) return invalid(request, reply);
-    const key = `user:${request.auth!.user.id}`;
-    const blocked = claimLimiter.blockedFor(key);
-    if (blocked > 0) {
-      reply.header('Retry-After', String(Math.max(1, Math.ceil(blocked / 1000))));
-      return reply
-        .code(429)
-        .send(errorBody('RATE_LIMITED', 'Demasiados intentos. Intente más tarde.', request.id));
-    }
+    // El limite de reclamos fallidos por cuenta es COMPARTIDO (PostgreSQL) y lo aplica el servicio.
     const result = await service.claim(context(request), body.data);
-    if (!result.ok && result.reason === 'CLAIM_INVALID') claimLimiter.fail(key);
-    if (result.ok) claimLimiter.reset(key);
     return sendMobileResult(request, reply, result, 200);
   });
 

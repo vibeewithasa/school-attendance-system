@@ -18,6 +18,7 @@
     "db:whoami": "tsx scripts/db-identity.ts",
     "db:state": "tsx scripts/db-state.ts",
     "db:apply-privileges": "tsx scripts/apply-privileges.ts",
+    "db:mobile-cleanup": "tsx scripts/mobile-cleanup.ts",
     "auth:bootstrap": "tsx scripts/bootstrap-authority.ts",
     "auth:second-authority": "tsx scripts/authorize-second-authority.ts",
     "dev:sandbox": "tsx scripts/dev-sandbox.ts",

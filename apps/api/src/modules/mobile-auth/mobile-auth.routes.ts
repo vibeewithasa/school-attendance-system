@@ -37,9 +37,11 @@ export interface MobileRoutesOptions {
   service: MobileAuthService;
   guards: MobileGuards;
   config: MobileAuthConfig;
+  /**
+   * Limitadores en MEMORIA de cada instancia: defensa ADICIONAL contra rafagas (no son la proteccion de seguridad, que es
+   * compartida en PostgreSQL: pruebas y nonces por clave, solicitudes por IP y ventana, pendientes, reclamos por cuenta).
+   */
   limiters: {
-    /** Solicitudes de vinculacion por IP (cada llamada cuenta). */
-    enrollIp: AttemptLimiter;
     /** Nonces pedidos por IP (cada llamada cuenta). */
     challengeIp: AttemptLimiter;
     /** Fallos en token/renovacion por IP. */
@@ -72,6 +74,8 @@ export function sendMobileResult<T>(
   if (result.ok) return reply.code(success).send(map(result.value));
   if (result.code === 'UNAUTHENTICATED')
     reply.header('WWW-Authenticate', 'DPoP error="invalid_token"');
+  if (result.retryAfterSeconds !== undefined)
+    reply.header('Retry-After', String(Math.max(1, Math.ceil(result.retryAfterSeconds))));
   return reply
     .code(HTTP_STATUS[result.code])
     .send(errorBody(result.reason, result.message, request.id));
@@ -136,10 +140,6 @@ export function mobileRoutes(app: FastifyInstance, options: MobileRoutesOptions)
     async (request, reply) => {
       const body = mobileEnrollRequestBody.safeParse(request.body);
       if (!body.success) return invalid(request, reply);
-      const key = `ip:${request.ip}`;
-      const blocked = limiters.enrollIp.blockedFor(key);
-      if (blocked > 0) return tooMany(request, reply, blocked);
-      limiters.enrollIp.fail(key); // cada solicitud cuenta contra la IP
       const result = await service.createRequest(
         { publicKey: body.data.publicKey, label: body.data.label },
         ctx(request),
