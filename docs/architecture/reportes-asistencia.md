@@ -113,7 +113,41 @@ guardado posterior sí se ve en la lectura siguiente.
   consistencia con conexiones reales, `pnpm test:pg-temp`).
 - **Componentes web** (`reportes-asistencia.test.tsx`, 35; jsdom + `fetch` falso): **no son E2E ni pruebas de navegador real**.
 
-## 8. Qué falta / dependencias
+## 8. Seguimiento de ausencias registradas (vista administrativa)
+
+Pantalla «Seguimiento de ausencias» (`/asistencia/reportes/seguimiento`, pestaña junto a los dos reportes). **Reutiliza el reporte por grupo
+(`GET /school/attendance/reports/group`): no hay endpoint, consulta, tabla ni migración nuevos, ni permisos nuevos.** Solo reordena y
+describe en el navegador lo que el servidor ya contó (`apps/web-admin/src/features/reportes-asistencia/followup.ts`, funciones puras).
+
+- **Qué cuenta**: «ausencias registradas» = marcas `absent` explícitas de `attendance_records`, en listas finalizadas **y en borrador** (el
+  estado de cada lista se muestra). No suman: día sin lista, fines de semana, sin marca (pendiente), alumno fuera del padrón de una lista,
+  alumno aún no inscrito o ya dado de baja, recibos de idempotencia (`old = new`) ni eventos (el servidor no los consulta). **Los
+  justificantes recibidos no descuentan nada** (D-10 pendiente) y el módulo de justificantes no se consulta.
+- **Datos por alumno**: ausencias, presentes registrados, sin marca y listas que lo incluyen. Solo aparecen alumnos que están en el padrón
+  congelado de alguna lista del periodo: **no se infiere a nadie más** (un alumno sin ninguna lista no aparece). Un alumno de otro grupo
+  nunca recibe ausencias del grupo consultado (los cortes salen de los renglones de esas listas); cambios de grupo y bajas se reflejan
+  solo en las listas que lo incluyen.
+- **Estado de los datos** (descriptivo, no es una alerta): «Datos completos» solo si todos los días hábiles del periodo tienen lista
+  finalizada; si no, lista los motivos (días sin lista «no determinado», listas en borrador, sin marca, «no estaba en el padrón de N listas»).
+- **Orden**: inicial, mayor número de ausencias registradas; también menor número y nombre del alumno. Desempate estable: apellidos,
+  nombres (sin distinguir acentos ni mayúsculas) e identificador. Se ordena en el navegador, sin volver a consultar.
+- **Aclaración visible**: «Los conteos reflejan únicamente ausencias registradas. No incluyen reglas de justificantes ni representan alertas
+  oficiales.» No hay porcentajes, umbrales, niveles de riesgo, colores de alarma, alertas, notificaciones, exportaciones ni acciones
+  (sancionar, justificar, corregir marcas, finalizar listas).
+- **Permisos y fechas**: los del reporte por grupo (`attendance:read` con su alcance; ciclo y periodo validados por el servidor; máximo
+  190 días, sin fechas futuras). **Trabajo Social no tiene `attendance:read`** (0010): sus permisos `justifications:*` no le dan acceso
+  (403 sin nombres ni opciones, probado). Si la escuela decide que Trabajo Social consulte ausencias, requiere una decisión y una revisión de
+  RBAC propias; no se tocó ningún permiso.
+- **Filtros en la URL** (`ciclo`, `grupo`, `desde`, `hasta`, `orden`): al volver desde el reporte individual no se pierden; un grupo o ciclo
+  desconocido en la URL se ignora.
+- **Limitaciones**: periodos de hasta 190 días por consulta; el historial de asignaciones de prefectura ya revocadas no da acceso (ver §4);
+  la vista depende de que existan listas (D-02/D-04 pendientes de la escuela para su captura tardía y finalización).
+- **Pruebas**: 32 de pantalla (`seguimiento.test.tsx`, jsdom; **no son E2E**), 14 de las transformaciones puras (`followup.test.ts`) y 9 de
+  API (`attendance-followup-http.test.ts`: ausencias repetidas, baja y traslado, consistencia de cortes, Trabajo Social, sesión caducada y
+  cuenta inactiva, parámetros manipulados, justificantes sin efecto, lecturas sin escrituras) que también corren en PostgreSQL 18 desechable
+  (`pgtemp/attendance-followup.pg.test.ts`).
+
+## 9. Qué falta / dependencias
 
 - **D-10** (justificantes y reportes) sigue pendiente; existe un registro de **recepción** de justificantes ([justificantes-recepcion.md](justificantes-recepcion.md)) que es independiente de estos reportes y **no** los afecta; hasta entonces los reportes solo muestran marcas registradas.
 - Exportaciones, estadísticas, alertas, calendario escolar y reportes de periodos largos (varios meses por consulta) son trabajo

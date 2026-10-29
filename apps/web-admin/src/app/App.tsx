@@ -12,6 +12,7 @@ import { AttendanceDayPage } from '../features/asistencia/AttendanceDayPage';
 import { AttendancePage } from '../features/asistencia/AttendancePage';
 import { MobileDevicesPage } from '../features/dispositivos/MobileDevicesPage';
 import { JustificationsPage } from '../features/justificantes/JustificationsPage';
+import { FollowupPage } from '../features/reportes-asistencia/FollowupPage';
 import { GroupReportPage } from '../features/reportes-asistencia/GroupReportPage';
 import { StudentReportPage } from '../features/reportes-asistencia/StudentReportPage';
 import { PrefectAssignmentsPage } from '../features/prefectura/PrefectAssignmentsPage';
@@ -36,6 +37,7 @@ export function App() {
             element={<Navigate to="/asistencia/reportes/grupo" replace />}
           />
           <Route path="asistencia/reportes/grupo" element={<GroupReportPage />} />
+          <Route path="asistencia/reportes/seguimiento" element={<FollowupPage />} />
           <Route path="asistencia/reportes/alumno" element={<StudentReportPage />} />
           <Route path="asistencia/:dayId" element={<AttendanceDayPage />} />
         </Route>

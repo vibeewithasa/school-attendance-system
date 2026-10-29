@@ -130,6 +130,8 @@ resultados, sin permisos y guardado en curso (el botón se deshabilita: no hay d
 
 ## 10. Pendiente / dependencias
 
+- El «Seguimiento de ausencias» ([reportes-asistencia.md](reportes-asistencia.md) §8) **no consulta** este módulo: los justificantes recibidos no descuentan ausencias ni cambian ningún conteo.
+
 - **D-10**: qué efecto tienen los justificantes en faltas, reportes y alertas. Hasta entonces no se conectan.
 - Anulación/corrección de un registro mal capturado, adjuntos, motivos, notificaciones y políticas de fechas anticipadas o tardías.
 - Ratificar la búsqueda mínima de alumnos para Trabajo Social y la retención de estos registros.
