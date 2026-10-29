@@ -18,6 +18,7 @@ const ALLOWED = [
   '0004-prefect-assignments-write',
   '0005-attendance-write',
   '0006-mobile-auth-write',
+  '0007-justifications-write',
 ] as const;
 const DIR = join(API_DIR, '..', '..', 'tools', 'db', 'privileges');
 

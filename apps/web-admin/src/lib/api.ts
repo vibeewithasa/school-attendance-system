@@ -11,6 +11,11 @@ import type {
   AttendanceReportStudentOptions,
   AttendanceStudentReport,
   AttendanceStudentReportQuery,
+  CreateJustificationReceiptBody,
+  CreateJustificationReceiptResponse,
+  JustificationReceiptList,
+  JustificationStudentSearch,
+  ListJustificationReceiptsQuery,
   AttendanceDayList,
   AttendanceEventList,
   AttendanceTodayResponse,
@@ -274,6 +279,13 @@ export const api = {
     request<AttendanceStudentReport>(
       `/school/attendance/reports/student/${studentId}${query({ ...q })}`,
     ),
+  // --- Recepcion de justificantes (Trabajo Social): hecho administrativo; no aprueba ni modifica la asistencia. ---
+  searchJustificationStudents: (q: string) =>
+    request<JustificationStudentSearch>(`/school/justifications/students${query({ q })}`),
+  createJustificationReceipt: (body: CreateJustificationReceiptBody) =>
+    mutate<CreateJustificationReceiptResponse>('/school/justifications/receipts', 'POST', body),
+  listJustificationReceipts: (q: Partial<ListJustificationReceiptsQuery> = {}) =>
+    request<JustificationReceiptList>(`/school/justifications/receipts${query({ ...q })}`),
   listAttendanceEvents: (id: string, q: { page?: number; pageSize?: number } = {}) =>
     request<AttendanceEventList>(`/school/attendance/days/${id}/events${query({ ...q })}`),
 

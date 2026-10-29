@@ -11,6 +11,7 @@ import { PersonalPage } from '../features/personal/PersonalPage';
 import { AttendanceDayPage } from '../features/asistencia/AttendanceDayPage';
 import { AttendancePage } from '../features/asistencia/AttendancePage';
 import { MobileDevicesPage } from '../features/dispositivos/MobileDevicesPage';
+import { JustificationsPage } from '../features/justificantes/JustificationsPage';
 import { GroupReportPage } from '../features/reportes-asistencia/GroupReportPage';
 import { StudentReportPage } from '../features/reportes-asistencia/StudentReportPage';
 import { PrefectAssignmentsPage } from '../features/prefectura/PrefectAssignmentsPage';
@@ -27,6 +28,7 @@ export function App() {
           <Route path="catalogo" element={<CatalogPage />} />
           <Route path="alumnos" element={<StudentsPage />} />
           <Route path="prefectura" element={<PrefectAssignmentsPage />} />
+          <Route path="justificantes" element={<JustificationsPage />} />
           <Route path="dispositivos" element={<MobileDevicesPage />} />
           <Route path="asistencia" element={<AttendancePage />} />
           <Route

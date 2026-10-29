@@ -83,6 +83,11 @@ export function Layout() {
                 Reportes de asistencia
               </NavLink>
             )}
+            {permissionsOf(me).canViewJustifications && (
+              <NavLink to="/justificantes" className={navClass}>
+                Justificantes
+              </NavLink>
+            )}
             {permissionsOf(me).canViewPrefectAssignments && (
               <NavLink to="/prefectura" className={navClass}>
                 Asignaciones de prefectura

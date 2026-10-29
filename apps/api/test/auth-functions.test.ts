@@ -25,6 +25,8 @@ const EXPECTED_FUNCTIONS = [
   'auth_tokens_guard_update',
   'enrollments_guard_insert',
   'enrollments_guard_update',
+  'jr_guard_insert',
+  'jr_immutable',
   'md_guard_insert',
   'md_guard_update',
   'mdr_guard_insert',

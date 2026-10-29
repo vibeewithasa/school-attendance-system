@@ -82,6 +82,8 @@ export interface ApiClusterOptions {
   attendanceWrite?: boolean;
   /** Aplica la PROPUESTA 0006 (autenticacion movil aislada; exige la migracion 0011). Por defecto NO. */
   mobileWrite?: boolean;
+  /** Aplica la PROPUESTA 0007 (registro de recepcion de justificantes; exige la migracion 0013). Por defecto NO. */
+  justificationsWrite?: boolean;
 }
 
 export async function startApiCluster(
@@ -125,6 +127,11 @@ export async function startApiCluster(
     for (const stmt of privilegeStatements('0006-mobile-auth-write.proposal.sql'))
       await owner.query(stmt);
     await owner.query(privilegeFile('0006-mobile-auth-write.verify.sql'));
+  }
+  if (options.justificationsWrite) {
+    for (const stmt of privilegeStatements('0007-justifications-write.proposal.sql'))
+      await owner.query(stmt);
+    await owner.query(privilegeFile('0007-justifications-write.verify.sql'));
   }
   const pool = new pg.Pool({
     host: '127.0.0.1',

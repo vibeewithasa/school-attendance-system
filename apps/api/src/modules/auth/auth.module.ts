@@ -27,6 +27,8 @@ import {
   pgGroupAssignments,
 } from '../prefect-assignments/prefect-assignments.service.js';
 import { attendanceRoutes } from '../attendance/attendance.routes.js';
+import { justificationRoutes } from '../justifications/justifications.routes.js';
+import { createJustificationService } from '../justifications/justifications.service.js';
 import { mobileAttendanceRoutes } from '../attendance/attendance.mobile.js';
 import {
   createAttendanceService,
@@ -294,6 +296,14 @@ export async function registerAuth(
         floodLimit: limits.floodOther,
       });
       // Asistencia diaria (una lista por grupo y fecha): captura la prefectura de sus grupos, Direccion supervisa (ver attendance.service.ts).
+      // Recepcion de justificantes (Trabajo Social): hecho administrativo; no aprueba ni toca la asistencia (ver justifications.service.ts).
+      justificationRoutes(scope, {
+        service: createJustificationService({ store: options.store, today: options.schoolToday }),
+        guards,
+        mfaDeferredAllowed:
+          env.AUTH_MFA_ENFORCEMENT === 'deferred' && env.NODE_ENV !== 'production',
+        floodLimit: limits.floodOther,
+      });
       attendanceRoutes(scope, {
         service: attendanceService,
         guards,

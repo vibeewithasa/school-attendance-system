@@ -961,6 +961,7 @@ describe('0010: RBAC incremental (de 0009 a 0010)', () => {
     const ts = ROLES.find((r) => r.key === 'trabajo_social')!;
     expect(ts.grants.filter((x) => x.permission.startsWith('attendance:'))).toEqual([]);
     expect(ts.grants.map((x) => x.permission).sort()).toEqual([
+      'justifications:create', // 0013: solo RECEPCION (no aprueba)
       'justifications:manage',
       'justifications:read',
     ]);
