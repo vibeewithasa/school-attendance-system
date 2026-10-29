@@ -19,6 +19,10 @@ coverage/
 local.properties
 pgpass.conf
 
+# Resultados de pruebas E2E (Playwright)
+test-results/
+playwright-report/
+
 # Logs y temporales
 *.log
 npm-debug.log*

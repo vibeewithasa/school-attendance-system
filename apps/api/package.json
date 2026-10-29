@@ -22,7 +22,8 @@
     "auth:bootstrap": "tsx scripts/bootstrap-authority.ts",
     "auth:second-authority": "tsx scripts/authorize-second-authority.ts",
     "dev:sandbox": "tsx scripts/dev-sandbox.ts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "e2e:stack": "tsx scripts/e2e-stack.ts"
   },
   "dependencies": {
     "@eta15/shared-contracts": "workspace:*",
