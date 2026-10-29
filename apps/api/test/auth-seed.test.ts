@@ -118,7 +118,7 @@ describe('semilla en la base (0005) = catalogo en codigo', () => {
     );
     expect(r.rows[0]!.n).toBe(0);
   });
-  it('NO siembra usuarios, sesiones ni tokens; la unica auditoria es la de las altas/bajas de 0006, 0008, 0009, 0010 y 0011', async () => {
+  it('NO siembra usuarios, sesiones ni tokens; la unica auditoria es la de las altas/bajas de 0006, 0008, 0009, 0010, 0011 y 0013', async () => {
     for (const t of ['users', 'user_roles', 'sessions', 'auth_tokens']) {
       const r = await db.query<{ n: number }>(`select count(*)::int n from ${t}`);
       expect(r.rows[0]!.n, t).toBe(0);
@@ -130,7 +130,8 @@ describe('semilla en la base (0005) = catalogo en codigo', () => {
     // 0009 (prefectura): 3 altas (2 de direccion, 1 de prefectura) + 1 baja (students:read de prefectura);
     // 0010 (asistencia): 1 baja (attendance:read global de trabajo_social);
     // 0011 (autenticacion movil, prototipo): 2 altas (mobile_devices:manage de direccion y :enroll de prefectura); todas sin actor
-    expect(audit.rows).toHaveLength(16);
+    // 0013 (recepcion de justificantes): 1 alta (justifications:create de trabajo_social)
+    expect(audit.rows).toHaveLength(17);
     expect(
       audit.rows.every(
         (x) => x.event_type === 'role.permissions_changed' && x.actor_user_id === null,

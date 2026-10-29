@@ -33,6 +33,11 @@ async function main(): Promise<void> {
   const prefectWrite = process.argv.includes('--prefect-write');
   // --attendance-write aplica la propuesta 0005 (asistencia diaria), tambien solo en este clúster.
   const attendanceWrite = process.argv.includes('--attendance-write');
+  // --justifications-write aplica la propuesta 0007 (registro de RECEPCION de justificantes; migracion 0013) y crea una persona ficticia
+  // de Trabajo Social, tambien solo en este clúster. Es solo recepcion: no aprueba ni cambia la asistencia (D-10 pendiente).
+  const justificationsWrite = process.argv.includes('--justifications-write');
+  if (justificationsWrite && !(catalogWrite && studentsWrite))
+    throw new Error('--justifications-write requiere --catalog-write --students-write');
   // --seed-attendance siembra datos FICTICIOS para probar la asistencia (ciclo, grupos, alumnos y asignaciones de prefectura).
   const seedAttendance = process.argv.includes('--seed-attendance');
   // --school-today=AAAA-MM-DD fija el "hoy" escolar de la asistencia SOLO en este entorno (p. ej. un sabado para probar el rechazo).
@@ -69,6 +74,7 @@ async function main(): Promise<void> {
     prefectWrite,
     attendanceWrite,
     mobileWrite: mobileAuth,
+    justificationsWrite,
   });
   // Aislamiento: el clúster desechable usa un puerto propio; jamas el del servicio de PostgreSQL de Windows (5432).
   if (cluster.pgt.port === 5432) {
@@ -146,6 +152,26 @@ async function main(): Promise<void> {
       [pref.rows[0]!.id],
     );
     accounts.push({ rol: 'prefectura', correo, contrasena: prefPw });
+  }
+
+  // Persona ficticia de Trabajo Social (solo con --justifications-write): registra la RECEPCION de justificantes.
+  if (justificationsWrite) {
+    const tsPw = newPassword();
+    const ts = await cluster.owner.query<{ id: string }>(
+      `INSERT INTO users (email, display_name, account_domain, status, password_hash)
+       VALUES ('trabajo.social.ficticia@escuela.test', 'Trabajo social ficticia', 'school', 'active', $1) RETURNING id`,
+      [await passwords.hash(tsPw)],
+    );
+    await cluster.owner.query(
+      `INSERT INTO user_roles (user_id, role_id, domain, granted_by, grant_source)
+       SELECT $1, r.id, r.domain, d.id, 'grant' FROM roles r, users d WHERE r.key = 'trabajo_social' AND d.email = 'direccion.ficticia@escuela.test'`,
+      [ts.rows[0]!.id],
+    );
+    accounts.push({
+      rol: 'trabajo_social',
+      correo: 'trabajo.social.ficticia@escuela.test',
+      contrasena: tsPw,
+    });
   }
 
   if (seedAttendance) {

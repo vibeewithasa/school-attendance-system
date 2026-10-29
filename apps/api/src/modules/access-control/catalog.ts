@@ -199,6 +199,14 @@ const RAW_PERMISSIONS: readonly PermissionDef[] = [
     scopes: ALL_OR_GROUPS,
   },
   {
+    // 0013: SOLO recepcion (hecho administrativo): no aprueba ni rechaza, no justifica faltas ni toca la asistencia (D-10 pendiente).
+    key: 'justifications:create',
+    domain: 'school',
+    description:
+      'Registrar la recepcion de justificantes (no los aprueba ni modifica la asistencia)',
+    scopes: ALL,
+  },
+  {
     key: 'justifications:manage',
     domain: 'school',
     description: 'Registrar y resolver justificantes',
@@ -296,6 +304,8 @@ export const ROLES: readonly RoleDef[] = [
       // funciones y datos; tendra un permiso especifico para sus justificantes.
       g('justifications:read'),
       g('justifications:manage'),
+      // 0013: registra la RECEPCION de justificantes (no los aprueba).
+      g('justifications:create'),
     ],
   },
   {

@@ -115,7 +115,7 @@ guardado posterior sí se ve en la lectura siguiente.
 
 ## 8. Qué falta / dependencias
 
-- **D-10** (justificantes y reportes) sigue pendiente; hasta entonces los reportes solo muestran marcas registradas.
+- **D-10** (justificantes y reportes) sigue pendiente; existe un registro de **recepción** de justificantes ([justificantes-recepcion.md](justificantes-recepcion.md)) que es independiente de estos reportes y **no** los afecta; hasta entonces los reportes solo muestran marcas registradas.
 - Exportaciones, estadísticas, alertas, calendario escolar y reportes de periodos largos (varios meses por consulta) son trabajo
   posterior y dependen de decisiones de la escuela.
 - Los datos de `eta15_dev` siguen sin alumnos ni listas: estos reportes se probaron solo con datos sintéticos.

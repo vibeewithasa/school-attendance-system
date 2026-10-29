@@ -48,6 +48,9 @@ export function permissionsOf(me: AuthMeResponse) {
     /** Asistencia diaria (solo presentacion; el servidor autoriza y aplica el alcance por grupo). */
     canViewAttendance: has.has('attendance:read'),
     canCaptureAttendance: has.has('attendance:capture'),
+    /** Justificantes (recepcion, Trabajo Social): solo con alcance all; la prefectura (assigned_groups) no accede. */
+    canRegisterJustifications: hasAll('justifications:create'),
+    canViewJustifications: hasAll('justifications:read') || hasAll('justifications:create'),
     /** Dispositivos moviles (prototipo de sandbox): la persona titular vincula los suyos; la autoridad aprueba y revoca. */
     canEnrollMobile: me.permissions.some(
       (p) => p.permission === 'mobile_devices:enroll' && p.scope === 'own',

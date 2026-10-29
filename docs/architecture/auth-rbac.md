@@ -349,6 +349,7 @@ La excepción es **solo de desarrollo local con datos sintéticos**. Antes de us
 | `attendance:correct`                                                              |     —      |       —        |       —        |   ✓ (*)   |       —       |
 | `justifications:read`                                                             |     G      |       ✓        |       —        |     ✓     |       —       |
 | `justifications:manage`                                                           |     —      |       ✓        |       —        |     —     |       —       |
+| `justifications:create` (³)                                                       |     —      |       ✓        |       —        |     —     |       —       |
 | `access:scan`                                                                     |     —      |       —        |       ✓        |     —     |       —       |
 | `access:read`                                                                     |     —      |       —        |       ✓        |     ✓     |       —       |
 | `reports:read`                                                                    |     —      |       —        |       —        |     ✓     |       —       |
@@ -360,6 +361,8 @@ La excepción es **solo de desarrollo local con datos sintéticos**. Antes de us
 (¹ᵖ) Migración **0009** (**aplicada** en `eta15_dev` el 2026-10-27): prefectura pierde `students:read` (solo necesita el dato básico con alcance `assigned_groups`) y gana `prefect_assignments:read` con alcance `own`; Dirección gana `prefect_assignments:manage|read`. Las columnas de `trabajo_social` y `control_acceso` muestran la semilla original (0008 retiró su lectura global de alumnos). Ver [modelo-asignaciones-prefectura.md](modelo-asignaciones-prefectura.md).
 
 (²) Migración **0010** (asistencia diaria; **aplicada en `eta15_dev` el 2026-10-27**): retira `attendance:read` con alcance `all` a `trabajo_social` (la semilla 0004 lo concedía; política cerrada por defecto, 1 evento de auditoría, 36 asignaciones de permisos, ya aplicada); la tabla muestra el estado tras 0010. Trabajo social conserva `justifications:read|manage` y recibirá un permiso específico cuando la institución defina sus funciones. Prefectura captura y consulta solo sus grupos y solo el día de hoy; Dirección supervisa (`attendance:read` `all`) y no captura; `attendance:correct` queda **reservado sin operación**. Ver [diseno-asistencia-diaria.md](diseno-asistencia-diaria.md).
+
+(³) Migración **0013** (recepción de justificantes; **no aplicada** en `eta15_dev`): permiso escolar nuevo, no de autoridad, solo para `trabajo_social` con alcance `all` (1 evento de auditoría). Es solo **recepción** (hecho administrativo): no aprueba ni modifica la asistencia (D-10 pendiente). El módulo exige alcance `all` también para `justifications:read`: la prefectura conserva su concesión histórica `assigned_groups` pero no accede. Ver [justificantes-recepcion.md](justificantes-recepcion.md).
 
 (*) Supuestos de Dirección a confirmar. Los roles no son un conjunto cerrado: se agregan filas; los permisos de autoridad solo por migración.
 
