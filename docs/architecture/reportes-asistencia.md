@@ -141,7 +141,7 @@ describe en el navegador lo que el servidor ya contó (`apps/web-admin/src/featu
 - **Filtros en la URL** (`ciclo`, `grupo`, `desde`, `hasta`, `orden`): al volver desde el reporte individual no se pierden; un grupo o ciclo
   desconocido en la URL se ignora.
 - **Limitaciones**: periodos de hasta 190 días por consulta; el historial de asignaciones de prefectura ya revocadas no da acceso (ver §4);
-  la vista depende de que existan listas (D-02/D-04 pendientes de la escuela para su captura tardía y finalización).
+  la vista depende de que existan listas (D-01 captura tardía y D-04 finalización, pendientes de la escuela).
 - **Pruebas**: 32 de pantalla (`seguimiento.test.tsx`, jsdom; **no son E2E**), 14 de las transformaciones puras (`followup.test.ts`) y 9 de
   API (`attendance-followup-http.test.ts`: ausencias repetidas, baja y traslado, consistencia de cortes, Trabajo Social, sesión caducada y
   cuenta inactiva, parámetros manipulados, justificantes sin efecto, lecturas sin escrituras) que también corren en PostgreSQL 18 desechable

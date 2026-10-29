@@ -510,3 +510,27 @@ describe('semantica de recepcion e independencia de la asistencia', () => {
     ).toBe(true);
   });
 });
+
+describe('regresion E2E: el selector de alumno no puede ser un formulario anidado', () => {
+  // Defecto hallado por el E2E en navegador real: el selector de alumno era un <form> DENTRO del formulario de registro. Un <form>
+  // anidado es HTML invalido y Chrome enviaba el formulario externo: la busqueda no funcionaba. jsdom no lo detectaba.
+  it('no hay ningun <form> dentro de otro <form> y los botones de buscar no envian formularios', async () => {
+    open();
+    await screen.findByRole('form', { name: 'Registro de recepción de justificante' });
+    expect(document.querySelectorAll('form form')).toHaveLength(0);
+    for (const b of screen.getAllByRole('button', { name: 'Buscar' }))
+      expect((b as HTMLButtonElement).type).toBe('button');
+    expect(screen.getAllByRole('search')).toHaveLength(2);
+  });
+
+  it('Enter en el cuadro de busqueda busca al alumno y NO envia el registro', async () => {
+    const fake = open();
+    const form = await screen.findByRole('search', { name: 'Alumno' });
+    await userEvent.type(within(form).getByRole('searchbox'), 'Ana{Enter}');
+    expect(
+      await screen.findByRole('list', { name: 'Resultados de la búsqueda de alumnos' }),
+    ).toBeTruthy();
+    expect(posts(fake)).toHaveLength(0);
+    expect(screen.queryByText('Elige al alumno.')).toBeNull();
+  });
+});

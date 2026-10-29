@@ -27,7 +27,8 @@
     "test:integration": "pnpm --filter @eta15/api test:integration",
     "test:pg-temp": "pnpm --filter @eta15/api test:pg-temp",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:e2e": "pnpm --filter @eta15/web-admin test:e2e"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

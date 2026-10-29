@@ -125,8 +125,7 @@ function StudentPicker(props: {
   const [problem, setProblem] = useState<string | null>(null);
   const ticket = useRef(0);
 
-  async function search(e: React.FormEvent) {
-    e.preventDefault();
+  async function search() {
     const text = q.normalize('NFC').trim().replace(/\s+/g, ' ');
     if (text.length < JUSTIFICATION_SEARCH_MIN) {
       setProblem(`Escribe al menos ${JUSTIFICATION_SEARCH_MIN} letras del nombre o el código.`);
@@ -171,7 +170,9 @@ function StudentPicker(props: {
 
   return (
     <div>
-      <form onSubmit={(e) => void search(e)} role="search" aria-label={props.legend} noValidate>
+      {/* NO es un <form>: este selector vive DENTRO del formulario de registro (y del filtro) y un <form> anidado es HTML invalido:
+          el navegador enviaria el formulario externo. Enter y el boton buscan sin enviar nada. */}
+      <div role="search" aria-label={props.legend}>
         <label htmlFor={ids.q} className="block text-sm font-semibold text-slate-800">
           {props.legend}
         </label>
@@ -185,9 +186,20 @@ function StudentPicker(props: {
             aria-invalid={problem ? true : undefined}
             aria-describedby={problem ? ids.err : undefined}
             placeholder="Nombre, apellido o código"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void search();
+              }
+            }}
             className={`${FIELD} max-w-xs`}
           />
-          <button type="submit" className={`${BTN_SECONDARY} mt-1`} disabled={searching}>
+          <button
+            type="button"
+            onClick={() => void search()}
+            className={`${BTN_SECONDARY} mt-1`}
+            disabled={searching}
+          >
             {searching ? 'Buscando…' : 'Buscar'}
           </button>
         </div>
@@ -196,7 +208,7 @@ function StudentPicker(props: {
             {problem}
           </p>
         )}
-      </form>
+      </div>
       {found && found.items.length === 0 && (
         <p role="status" className="mt-2 text-sm text-slate-700">
           No se encontraron alumnos con ese dato.
