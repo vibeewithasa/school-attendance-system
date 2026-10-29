@@ -112,6 +112,9 @@ export function ReportTabs() {
       <NavLink to="/asistencia/reportes/alumno" className={cls}>
         Reporte por alumno
       </NavLink>
+      <NavLink to="/asistencia/reportes/seguimiento" className={cls}>
+        Seguimiento de ausencias
+      </NavLink>
     </nav>
   );
 }
