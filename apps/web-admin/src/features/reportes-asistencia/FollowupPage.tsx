@@ -346,7 +346,7 @@ function FollowupView(props: {
           alumnos que están en el padrón de alguna lista; no se infiere a nadie más.
         </p>
       ) : (
-        <div className="mt-3 overflow-x-auto">
+        <div className="relative mt-3 overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <caption className="sr-only">
               Ausencias registradas por alumno, ordenadas por{' '}
