@@ -2,9 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { buildApp } from '../../src/app.js';
 import { loadEnv } from '../../src/config/env.js';
-import type { AuthLimits } from '../../src/modules/auth/auth.module.js';
+import type { AuthLimits, AuthModuleOptions } from '../../src/modules/auth/auth.module.js';
 import { DEV_COOKIE_NAME } from '../../src/modules/auth/guards.js';
 import { createPasswordService } from '../../src/modules/auth/password.js';
+import type { SessionStore } from '../../src/modules/auth/session-service.js';
 import type { Harness } from './auth-http-suite.js';
 import { ORIGIN } from './auth-http-suite.js';
 
@@ -41,7 +42,11 @@ export interface AdminKit {
   app: () => FastifyInstance;
   build: (
     limits?: Partial<AuthLimits>,
-    extra?: { schoolToday?: () => string },
+    extra?: {
+      schoolToday?: () => string;
+      mobile?: AuthModuleOptions['mobile'];
+      store?: SessionStore;
+    },
   ) => Promise<FastifyInstance>;
   seed: (opts: Seed) => Promise<Account>;
   login: (account: Account, target?: FastifyInstance) => Promise<Login>;
@@ -92,7 +97,15 @@ export function defineAdminHttpSuite(
     const logs: string[] = [];
     const secrets = new Set<string>();
 
-    const build = (limits: Partial<AuthLimits> = {}, extra: { schoolToday?: () => string } = {}) =>
+    const build = (
+      limits: Partial<AuthLimits> = {},
+      extra: {
+        schoolToday?: () => string;
+        mobile?: AuthModuleOptions['mobile'];
+        /** Almacen alternativo (pruebas de falla de la base): por defecto el de la suite. */
+        store?: SessionStore;
+      } = {},
+    ) =>
       buildApp(
         loadEnv({
           NODE_ENV: 'test',
@@ -103,10 +116,11 @@ export function defineAdminHttpSuite(
         }),
         {
           auth: {
-            store: harness.store,
+            store: extra.store ?? harness.store,
             passwords,
             limits: { ...GENEROUS, ...limits },
             ...(extra.schoolToday ? { schoolToday: extra.schoolToday } : {}),
+            ...(extra.mobile ? { mobile: extra.mobile } : {}),
           },
           logStream: { write: (c: string) => void logs.push(c) },
         },

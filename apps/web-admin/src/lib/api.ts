@@ -1,4 +1,9 @@
 import type {
+  ApproveMobileDeviceBody,
+  ClaimMobileDeviceBody,
+  MobileDevicesListResponse,
+  MobileRequestDto,
+  RevokeMobileDeviceBody,
   AttendanceDayDetail,
   AttendanceDayList,
   AttendanceEventList,
@@ -254,6 +259,23 @@ export const api = {
     mutate<FinalizeAttendanceDayResponse>(`/school/attendance/days/${id}/finalize`, 'POST', body),
   listAttendanceEvents: (id: string, q: { page?: number; pageSize?: number } = {}) =>
     request<AttendanceEventList>(`/school/attendance/days/${id}/events${query({ ...q })}`),
+
+  // --- Dispositivos moviles (PROTOTIPO de sandbox, ADR 0005 "propuesta"): canal web con cookie + CSRF. La persona titular reclama la
+  // solicitud de su dispositivo; una autoridad confirma la huella. Ninguna llamada envia un identificador de persona. ---
+  claimMobileDevice: (body: ClaimMobileDeviceBody) =>
+    mutate<MobileRequestDto>('/mobile-devices/claims', 'POST', body),
+  listMyMobileDevices: () => request<MobileDevicesListResponse>('/mobile-devices/mine'),
+  cancelMobileRequest: (id: string) =>
+    mutate<{ id: string }>(`/mobile-devices/mine/requests/${id}/cancel`, 'POST'),
+  revokeMyMobileDevice: (id: string) =>
+    mutate<{ id: string }>(`/mobile-devices/mine/devices/${id}/revoke`, 'POST'),
+  listMobileDevices: () => request<MobileDevicesListResponse>('/mobile-devices'),
+  approveMobileRequest: (id: string, body: ApproveMobileDeviceBody) =>
+    mutate<MobileRequestDto>(`/mobile-devices/requests/${id}/approve`, 'POST', body),
+  rejectMobileRequest: (id: string) =>
+    mutate<{ id: string }>(`/mobile-devices/requests/${id}/reject`, 'POST'),
+  revokeMobileDevice: (id: string, body: RevokeMobileDeviceBody) =>
+    mutate<{ id: string }>(`/mobile-devices/devices/${id}/revoke`, 'POST', body),
 
   // --- Activacion por la persona titular (rutas publicas; el secreto nunca sale de esta pagina salvo al completar) ---
   activationRequest: (email: string, secretHash: string) =>

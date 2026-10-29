@@ -903,7 +903,7 @@ describe('0010: RBAC incremental (de 0009 a 0010)', () => {
     Number((await d.query<{ n: number }>(`select count(*)::int n from ${table}`)).rows[0]!.n);
 
   it('lleva la marca destructiva limitada a su unico DELETE y no toca nada mas del RBAC', () => {
-    expect(migrations).toHaveLength(11);
+    expect(migrations.length).toBeGreaterThanOrEqual(11); // 0010 y las posteriores
     const raw = migrations[10]!.sql.join('\n');
     expect(raw.split('\n')[0]).toBe('-- eta15:allow-destructive');
     const sql = raw

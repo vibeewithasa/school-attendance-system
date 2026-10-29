@@ -30,7 +30,7 @@ const count = async (d: PGlite, table: string) =>
 
 describe('0008: politica RBAC de alumnos', () => {
   it('el journal ordena 0007 y 0008 y 0008 lleva la marca destructiva limitada a sus DELETE', () => {
-    expect(migrations).toHaveLength(11);
+    expect(migrations.length).toBeGreaterThanOrEqual(11); // 0008 y las posteriores
     const sql = migrations[8]!.sql
       .join('\n')
       .split('\n')

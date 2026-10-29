@@ -110,6 +110,12 @@ async function main(): Promise<number> {
         attendanceDays: await count('attendance_days'),
         attendanceRecords: await count('attendance_records'),
         attendanceEvents: await count('attendance_events'),
+        // null = la tabla no existe (migracion 0011 sin aplicar: prototipo de autenticacion movil, solo sandbox)
+        mobileDeviceRequests: await count('mobile_device_requests'),
+        mobileDevices: await count('mobile_devices'),
+        mobileSessions: await count('mobile_sessions'),
+        mobileProofJtis: await count('mobile_proof_jtis'),
+        mobileNonces: await count('mobile_nonces'),
         permissions: await count('permissions'),
         rolePermissions: await count('role_permissions'),
         auditEvents: await count('audit_events'),
@@ -164,7 +170,9 @@ async function main(): Promise<number> {
            FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
           WHERE c.relnamespace = 'public'::regnamespace
             AND c.relname IN ('students', 'enrollments', 'student_group_assignments', 'prefect_group_assignments',
-                              'attendance_days', 'attendance_records', 'attendance_events')
+                              'attendance_days', 'attendance_records', 'attendance_events',
+                              'mobile_device_requests', 'mobile_devices', 'mobile_sessions',
+                              'mobile_proof_jtis', 'mobile_nonces')
           GROUP BY c.relname ORDER BY 1`,
       ),
     };

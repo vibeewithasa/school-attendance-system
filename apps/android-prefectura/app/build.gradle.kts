@@ -30,6 +30,8 @@ android {
             buildConfigField("boolean", "DEMO_MODE", "true")
             // Comprobacion opcional de /health del backend de desarrollo (solo emulador; 10.0.2.2 = localhost del anfitrion).
             buildConfigField("String", "DEV_HEALTH_URL", "\"http://10.0.2.2:3000/health\"")
+            // Servidor de PRUEBAS de la vinculacion experimental (ADR 0005, propuesta). Solo debug y solo el anfitrion del emulador.
+            buildConfigField("String", "MOBILE_BASE_URL", "\"http://10.0.2.2:3000\"")
         }
         release {
             isMinifyEnabled = true
@@ -37,6 +39,7 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             buildConfigField("boolean", "DEMO_MODE", "false")
             buildConfigField("String", "DEV_HEALTH_URL", "\"\"")
+            buildConfigField("String", "MOBILE_BASE_URL", "\"\"")
             // Sin signingConfig: la firma release se disenara antes de cualquier distribucion.
         }
     }

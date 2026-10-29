@@ -70,16 +70,61 @@ class ProjectSecurityTest {
         assertTrue(rules.contains("<cloud-backup>") && rules.contains("<device-transfer>"))
     }
 
+    /** Prototipo de vinculacion movil (ADR 0005, propuesta): UNICO lugar donde pueden aparecer las palabras "token" y "authorization". */
+    private val mobileDir = "src/debug/java/mx/edu/eta15/prefectura/mobile"
+
     @Test
     fun `no hay credenciales ni tokens en el codigo ni en los recursos`() {
         val forbidden = Regex("(password|contrase[nñ]a|secret|bearer|authorization|api[_-]?key|token)", RegexOption.IGNORE_CASE)
         val offenders = sourceFiles("src/main", "src/debug", "src/release")
+            // El prototipo de vinculacion movil (solo debug) maneja cabeceras y credenciales de SESION en memoria; ver la prueba
+            // siguiente: ahi siguen prohibidas las contrasenas, los secretos y los esquemas "bearer".
+            .filterNot { it.invariantSeparatorsPath.contains(mobileDir) }
             // `SecretKey` es el tipo estandar de javax.crypto (API de Keystore), no un secreto.
             .filter { forbidden.containsMatchIn(it.readText().replace("SecretKey", "")) }
             .map { it.path }
         assertTrue("Archivos con palabras de credenciales: $offenders", offenders.isEmpty())
     }
 
+    @Test
+    fun `el prototipo movil no maneja contrasenas ni secretos y no guarda credenciales en disco`() {
+        val forbidden = Regex("(password|contrase[nñ]a|secret|bearer|api[_-]?key)", RegexOption.IGNORE_CASE)
+        val files = sourceFiles(mobileDir, "src/debug/res/values").filter { it.name.startsWith("mobile") || it.invariantSeparatorsPath.contains(mobileDir) }
+        assertTrue(files.isNotEmpty())
+        assertTrue(files.filter { forbidden.containsMatchIn(it.readText().replace("SecretKey", "")) }.map { it.path }.isEmpty())
+        // lo unico que se escribe en disco es el registro de vinculacion (identificadores y etiqueta), sin credenciales ni claves
+        val store = file("$mobileDir/LinkStore.kt").readText()
+        assertTrue(store.contains("noBackupFilesDir"))
+        assertFalse(Regex("(token|access|refresh|private|pairingCode|code)", RegexOption.IGNORE_CASE).containsMatchIn(store.substringAfter("data class LinkRecord").substringBefore("interface LinkStore")))
+        val writers = sourceFiles(mobileDir).filter { Regex("""writeText|writeBytes|FileOutputStream|openFileOutput""").containsMatchIn(it.readText()) }.map { it.name }
+        assertEquals(listOf("LinkStore.kt"), writers)
+    }
+
+    @Test
+    fun `el codigo de red y de claves de dispositivo solo existe en debug`() {
+        val shipped = sourceFiles("src/main", "src/release").filter { it.extension == "kt" }
+        val network = Regex("""java\.net\.|HttpURLConnection|okhttp|retrofit|ktor|WebView|DownloadManager""")
+        val deviceKeys = Regex("""KeyPairGenerator|ECGenParameterSpec|secp256r1|SHA256withECDSA|DPoP|Dpop""")
+        assertTrue("Red en main/release: ${shipped.filter { network.containsMatchIn(it.readText()) }.map { it.path }}", shipped.none { network.containsMatchIn(it.readText()) })
+        assertTrue("Claves de dispositivo en main/release: ${shipped.filter { deviceKeys.containsMatchIn(it.readText()) }.map { it.path }}", shipped.none { deviceKeys.containsMatchIn(it.readText()) })
+        // el unico simbolo compartido es el interruptor de la funcion: en release vale false y no contiene nada
+        val release = file("src/release/java/mx/edu/eta15/prefectura/mobile/MobileFeature.kt").readText()
+        assertTrue(release.contains("const val AVAILABLE = false"))
+        assertTrue(shipped.none { it.invariantSeparatorsPath.contains("/mobile/") && !it.name.startsWith("MobileFeature") })
+    }
+
+    @Test
+    fun `la clave del dispositivo no sale del Keystore ni se regenera en silencio`() {
+        val key = file("$mobileDir/DeviceKey.kt").readText()
+        assertTrue(key.contains("AndroidKeyStore"))
+        assertTrue(key.contains("PURPOSE_SIGN"))
+        assertFalse("sin PURPOSE_DECRYPT/ENCRYPT: solo firma", key.contains("PURPOSE_DECRYPT") || key.contains("PURPOSE_ENCRYPT"))
+        assertFalse("la clave privada no se exporta", Regex("""getEncoded|\.encoded\b|PKCS8EncodedKeySpec|KeyStore\.PrivateKeyEntry""").containsMatchIn(key))
+        // crear una clave exige que no exista otra (sin regeneracion silenciosa)
+        assertTrue(key.contains("Ya existe una clave de dispositivo: no se reemplaza"))
+        val all = sourceFiles(mobileDir).joinToString("\n") { it.readText() }
+        assertFalse("sin Log ni registros", Regex("""\bLog\.\w+\(|println\(""").containsMatchIn(all))
+    }
     @Test
     fun `Room nunca usa migracion destructiva`() {
         val offenders = sourceFiles("src/main", "src/debug")

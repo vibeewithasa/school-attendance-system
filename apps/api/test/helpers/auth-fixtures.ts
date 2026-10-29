@@ -72,6 +72,15 @@ export async function createApiRole(db: PGlite): Promise<void> {
   await db.exec(
     `grant execute on function auth_is_schema_owner(), auth_lock_authority(uuid, text), auth_current_actor() to api_runtime`,
   );
+  // 0011 (autenticacion movil): las dos funciones de elegibilidad las llaman la API y los triggers con los privilegios de la API.
+  // Condicional: varias pruebas construyen bases anteriores a 0011 a proposito.
+  await db.exec(
+    `do $$ begin
+       if to_regprocedure('mobile_user_eligible(uuid, timestamp with time zone)') is not null then
+         grant execute on function mobile_user_eligible(uuid, timestamp with time zone), mobile_actor_can_manage(uuid) to api_runtime;
+       end if;
+     end $$`,
+  );
 }
 
 /** Ejecuta `fn` con el rol de la API (no propietario) y restaura al propietario. */

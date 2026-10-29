@@ -48,6 +48,11 @@ export function permissionsOf(me: AuthMeResponse) {
     /** Asistencia diaria (solo presentacion; el servidor autoriza y aplica el alcance por grupo). */
     canViewAttendance: has.has('attendance:read'),
     canCaptureAttendance: has.has('attendance:capture'),
+    /** Dispositivos moviles (prototipo de sandbox): la persona titular vincula los suyos; la autoridad aprueba y revoca. */
+    canEnrollMobile: me.permissions.some(
+      (p) => p.permission === 'mobile_devices:enroll' && p.scope === 'own',
+    ),
+    canManageMobile: hasAll('mobile_devices:manage'),
     canCreate: (domain: Domain) => has.has(`users:manage_${domain}`),
     canGrant: (domain: Domain) => has.has(`roles:grant_${domain}`),
     canDisable: (domain: Domain) =>

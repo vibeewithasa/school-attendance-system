@@ -13,7 +13,7 @@ import {
   revokePrefectAssignmentBody,
   userIdSchema,
 } from '@eta15/shared-contracts';
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest, RouteShorthandOptions } from 'fastify';
 import { z } from 'zod';
 import { errorBody, type AuthGuards } from '../auth/guards.js';
 import type {
@@ -130,8 +130,41 @@ export function prefectAssignmentsRoutes(
   );
 
   // Contrato minimo para el cliente Android: solo los grupos de HOY de quien consulta (el servidor filtra siempre antes).
-  app.get('/me/groups', read, async (request, reply) => {
-    if (Object.keys((request.query as object) ?? {}).length > 0) return invalid(request, reply);
-    return send(request, reply, await service.myGroups(context(request)));
+  myGroupsRoute(app, {
+    service,
+    config: rate,
+    preHandler: guards.adminGuard(options.mfaDeferredAllowed),
   });
+}
+
+export interface SharedReadRouteOptions<S> {
+  service: S;
+  config: Record<string, unknown>;
+  /** Autenticacion del canal que registra la ruta (web: cookie; movil: token DPoP). La autorizacion de dominio es la misma. */
+  preHandler: RouteShorthandOptions['preHandler'];
+}
+
+/**
+ * GET /me/groups: los grupos de HOY de quien consulta. El actor sale de 
+equest.auth (web o movil): jamas de un parametro.
+ * Se registra en el canal web (cookie) y en el movil (token DPoP) con el MISMO handler y el MISMO servicio.
+ */
+export function myGroupsRoute(
+  app: FastifyInstance,
+  options: SharedReadRouteOptions<PrefectAssignmentsService>,
+): void {
+  app.get(
+    '/me/groups',
+    { config: options.config, preHandler: options.preHandler },
+    async (request, reply) => {
+      if (Object.keys((request.query as object) ?? {}).length > 0)
+        return reply.code(400).send(errorBody('VALIDATION_ERROR', 'Datos no válidos', request.id));
+      const result = await options.service.myGroups(context(request));
+      return result.ok
+        ? reply.code(200).send(result.value)
+        : reply
+            .code(STATUS[result.code])
+            .send(errorBody(result.reason ?? result.code, result.message, request.id));
+    },
+  );
 }

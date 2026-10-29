@@ -19,6 +19,7 @@
     "db:whoami": "pnpm --filter @eta15/api db:whoami",
     "db:state": "pnpm --filter @eta15/api db:state",
     "db:apply-privileges": "pnpm --filter @eta15/api db:apply-privileges",
+    "db:mobile-cleanup": "pnpm --filter @eta15/api db:mobile-cleanup",
     "auth:bootstrap": "pnpm --filter @eta15/api auth:bootstrap",
     "auth:second-authority": "pnpm --filter @eta15/api auth:second-authority",
     "dev:sandbox": "pnpm --filter @eta15/api dev:sandbox",
