@@ -7,9 +7,10 @@ escolar: **D-01 a D-10 siguen PENDIENTES**, ADR 0005 y 0006 siguen PROPUESTOS.
 
 1. **Ahora (sin depender de la escuela)** — cerrar lo técnico verificable:
    1. Revisar y fusionar la cadena de Draft PR en orden (#2 … #11 y esta rama) **por una persona**; hoy `main` no contiene el MVP.
-   2. Ampliar el E2E (B9, B10): administración de cuentas, catálogo, alumnos y asignaciones por Dirección; activación; dos navegadores; móvil de 375 px.
+   2. ~~Ampliar el E2E (B9, B10)~~ **Hecho** en `test/mvp-admin-lifecycle-e2e` (65 escenarios: administración de cuentas, activación con control dual, catálogo, alumnos, matrículas, asignaciones, sesiones simultáneas y 375 px). Queda la vinculación móvil (tras el ADR 0005).
    3. Pantalla/endpoint de **consulta de auditoría** de solo lectura para administración técnica (B2) — sin decidir retención, solo mostrar lo que ya se registra.
    4. Revisión de seguridad dedicada (privacidad de menores, búsqueda de alumnos de Trabajo Social, límites, cabeceras) y registro de hallazgos.
+      1b. **Nuevo bloqueo técnico-institucional (B13/B14):** definir con la escuela el procedimiento para la primera y la segunda autoridad escolar y diseñar la habilitación/recuperación de cuentas; sin ello no hay quién active a nadie en operación real.
 2. **Con la escuela** — responder el documento de decisiones (B4/B5): primero **D-10** (justificantes, reportes, alertas), **D-01** (captura tardía) y
    **D-04** (finalización); después D-02, D-03, D-05 a D-09. Cada respuesta se registra con fecha y responsable y actualiza ADR/estado.
 3. **Seguridad de acceso real** — MFA/TOTP (B1) con ADR propio, recuperación y pruebas adversariales; solo entonces datos reales.
@@ -35,7 +36,7 @@ escolar: **D-01 a D-10 siguen PENDIENTES**, ADR 0005 y 0006 siguen PROPUESTOS.
 
    ```powershell
    . .\tools\env.ps1
-   pnpm test:e2e          # levanta PostgreSQL temporal + API + portal, abre Chrome, ejecuta 27 escenarios y lo destruye todo
+   pnpm test:e2e          # levanta PostgreSQL temporal + API + portal, abre Chrome, ejecuta 65 escenarios y lo destruye todo
    ```
 
 2. **Manual (para mostrar el portal):** el sandbox existente, con cuentas ficticias de contraseña aleatoria que se muestra solo en la terminal:
@@ -63,6 +64,18 @@ días hábiles previos con listas (A: 3 finalizadas, 1 borrador con un alumno si
 3. **Trabajo Social**: _Justificantes_ → buscar alumno → fecha → **Registrar recepción** → folio → historial y filtros; mostrar que **no** puede ver asistencia ni seguimiento y que la
    recepción **no cambia** ninguna falta.
 4. **Cerrar** sesión y mostrar que la sesión anterior ya no sirve.
+
+### Guion ampliado: del alta de la cuenta al reporte (≈10 min, sandbox)
+
+Se puede mostrar **en vivo** lo que el E2E `10-cadena-funcional` automatiza. Requiere una **segunda autoridad** (en el E2E es la fixture `direccion2`; en `dev:sandbox` hay que
+sembrarla): el control dual impide que quien creó la cuenta apruebe su activación (en operación real esto sigue **bloqueado**, §11 B13 del inventario).
+
+1. **Dirección** → Personal → _Nueva cuenta_ (pendiente, sin contraseña) → asignar el rol _Prefectura_.
+2. **La persona** abre `/activar` en otro navegador, ve **su** código; la **segunda autoridad** lo verifica en _Solicitudes de activación_; la persona elige su contraseña y entra.
+3. **Dirección** → Catálogo (crear/activar ciclo y grupo) → Alumnos (registrar, inscribir, asignar grupo) → Asignaciones de prefectura (_Asignar grupos_).
+4. **La prefecta** ve **solo** su grupo (un grupo ajeno por URL no se distingue de uno inexistente), pasa la lista de hoy y la finaliza.
+5. **Dirección** consulta el reporte y el seguimiento; **Trabajo Social** registra la recepción (la falta no cambia). **Dirección revoca** la asignación y la prefecta pierde el acceso al instante.
+6. En un teléfono (o 375 px en el navegador) todo lo anterior es operable; las tablas se desplazan dentro de su contenedor.
 
 ### Limitaciones conocidas que hay que decir en voz alta
 

@@ -222,7 +222,7 @@ function GroupReportView({ report }: { report: AttendanceGroupReport }) {
       {report.days.length === 0 ? (
         <p className="mt-2 text-slate-700">El periodo no incluye días hábiles (lunes a viernes).</p>
       ) : (
-        <div className="mt-2 overflow-x-auto">
+        <div className="relative mt-2 overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <caption className="sr-only">Listas de asistencia del grupo por día hábil</caption>
             <thead>
@@ -295,7 +295,7 @@ function GroupReportView({ report }: { report: AttendanceGroupReport }) {
           Ninguna lista del periodo incluye alumnos: no hay marcas que contar.
         </p>
       ) : (
-        <div className="mt-2 overflow-x-auto">
+        <div className="relative mt-2 overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <caption className="sr-only">Marcas por alumno en las listas del periodo</caption>
             <thead>

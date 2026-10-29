@@ -316,7 +316,7 @@ function StudentReportView({ report }: { report: AttendanceStudentReport }) {
       {report.days.length === 0 ? (
         <p className="mt-2 text-slate-700">El periodo no incluye días hábiles (lunes a viernes).</p>
       ) : (
-        <div className="mt-2 overflow-x-auto">
+        <div className="relative mt-2 overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <caption className="sr-only">Situación del alumno por día hábil</caption>
             <thead>

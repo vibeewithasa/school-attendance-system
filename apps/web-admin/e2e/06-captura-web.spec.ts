@@ -74,11 +74,16 @@ test('la prefectura B abre la lista de hoy de su grupo, marca, guarda el borrado
   await page.getByRole('button', { name: 'Finalizar lista' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Finalizar', exact: true }).click();
   await expect(page.getByText(/finalizada/i).first()).toBeVisible();
-  const finalized = await db(
-    async (q) =>
-      (await q(`select status, revision from attendance_days where id = $1`, [today.id])).rows[0]!,
-  );
-  expect(finalized.status).toBe('finalized');
+  // el texto «finalizada» tambien aparece en las ayudas de la pantalla: se espera al cambio REAL (la lista deja de poder editarse) y se consulta
+  await expect(page.getByRole('button', { name: 'Guardar borrador' })).toHaveCount(0);
+  await expect
+    .poll(async () =>
+      db(
+        async (q) =>
+          (await q(`select status from attendance_days where id = $1`, [today.id])).rows[0]!.status,
+      ),
+    )
+    .toBe('finalized');
   // las marcas del historial se agregaron (solo-agregar) y la lista ya no se puede editar desde el portal
   expect(
     await db(

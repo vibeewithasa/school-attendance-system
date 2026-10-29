@@ -507,7 +507,7 @@ function History({ refresh }: { refresh: number }) {
               No hay recepciones registradas con esos filtros.
             </p>
           ) : (
-            <div className="mt-4 overflow-x-auto" aria-busy={loading}>
+            <div className="relative mt-4 overflow-x-auto" aria-busy={loading}>
               <table className="min-w-full text-left text-sm">
                 <caption className="sr-only">Recepciones de justificantes registradas</caption>
                 <thead>

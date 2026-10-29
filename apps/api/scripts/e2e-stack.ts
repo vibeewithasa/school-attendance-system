@@ -41,10 +41,14 @@ const isWeekday = (iso: string) => {
 export const E2E_ACCOUNTS = {
   tecnico: 'tecnico.e2e@escuela.test',
   direccion: 'direccion.e2e@escuela.test',
+  /** SEGUNDA autoridad escolar (precondicion de fixture: el control dual exige otra autoridad que apruebe las activaciones). */
+  direccion2: 'direccion2.e2e@escuela.test',
   prefecturaA: 'prefectura.a.e2e@escuela.test',
   prefecturaB: 'prefectura.b.e2e@escuela.test',
   trabajoSocial: 'trabajo.social.e2e@escuela.test',
   inactiva: 'prefectura.inactiva.e2e@escuela.test',
+  /** Cuenta activa que los escenarios de sesiones simultaneas deshabilitan por la interfaz. */
+  prefecturaBaja: 'prefectura.baja.e2e@escuela.test',
 } as const;
 
 async function main(): Promise<void> {
@@ -99,6 +103,8 @@ async function main(): Promise<void> {
   const prefA = await account(E2E_ACCOUNTS.prefecturaA, 'Prefectura A E2E', 'prefectura');
   const prefB = await account(E2E_ACCOUNTS.prefecturaB, 'Prefectura B E2E', 'prefectura');
   await account(E2E_ACCOUNTS.trabajoSocial, 'Trabajo social E2E', 'trabajo_social');
+  await account(E2E_ACCOUNTS.direccion2, 'Dirección 2 E2E', 'direccion');
+  await account(E2E_ACCOUNTS.prefecturaBaja, 'Prefectura baja E2E', 'prefectura');
   await account(E2E_ACCOUNTS.inactiva, 'Prefectura inactiva E2E', 'prefectura', 'disabled');
 
   // ---------------------------------------------------------------- datos escolares ficticios y deterministas
